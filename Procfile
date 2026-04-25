@@ -1,2 +1,2 @@
-worker: python agent.py
+worker: python polyagent/agent.py
 
