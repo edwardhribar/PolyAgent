@@ -1,20 +1,23 @@
 """
-PolyAgent - Autonomous Polymarket Trading Bot (Single File)
-Scans markets every 5 min, analyzes with Claude AI, places trades, learns from outcomes.
+PolyAgent - Autonomous Polymarket Trading Bot
+Scans markets, analyzes with Claude AI, places trades, learns from outcomes.
 """
 
 import os
 import json
+import time
 import logging
 import asyncio
 import aiohttp
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── Logging ───────────────────────────────────────────────────────
-Path("logs").mkdir(exist_ok=True)
-Path("data").mkdir(exist_ok=True)
+from config import Config
+from market_scanner import MarketScanner
+from ai_analyst import AIAnalyst
+from trade_executor import TradeExecutor
+from learning_engine import LearningEngine
+from database import Database
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,23 +29,91 @@ logging.basicConfig(
 )
 log = logging.getLogger("polyagent")
 
-# ── Config ────────────────────────────────────────────────────────
-WALLET          = os.getenv("WALLET_ADDRESS", "0xd45996A1d51A0C478cb499b1bc24386734000C9f")
-POLY_API_KEY    = os.getenv("POLYMARKET_API_KEY", "")
-ANTHROPIC_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
-PAPER_MODE      = os.getenv("PAPER_MODE", "true").lower() == "true"
-MAX_TRADE       = float(os.getenv("MAX_TRADE_SIZE", "10"))
-MAX_POSITIONS   = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
-MIN_LIQUIDITY   = float(os.getenv("MIN_LIQUIDITY", "5000"))
-MIN_VOLUME      = float(os.getenv("MIN_VOLUME", "10000"))
-BASE_CONFIDENCE = int(os.getenv("BASE_CONFIDENCE", "75"))
-SCAN_INTERVAL   = int(os.getenv("SCAN_INTERVAL_SECS", "300"))
-MARKETS_PER_SCAN = int(os.getenv("MARKETS_PER_SCAN", "20"))
 
-GAMMA_API     = "https://gamma-api.polymarket.com"
-CLOB_API      = "https://clob.polymarket.com"
-ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
+class PolyAgent:
+    def __init__(self):
+        self.config = Config()
+        self.db = Database()
+        self.scanner = MarketScanner(self.config)
+        self.analyst = AIAnalyst(self.config, self.db)
+        self.executor = TradeExecutor(self.config)
+        self.learner = LearningEngine(self.db, self.analyst)
+        self.cycle = 0
 
-CATEGORY_KEYWORDS = {
-    "Politics":     ["politics", "election", "president", "congress", "vote", "government", "senate", "republican", "democrat", "policy"],
-    "S
+    async def run(self):
+        log.info("=" * 60)
+        log.info("PolyAgent starting up")
+        log.info(f"Wallet: {self.config.WALLET_ADDRESS}")
+        log.info(f"Paper mode: {self.config.PAPER_MODE}")
+        log.info(f"Max trade size: ${self.config.MAX_TRADE_SIZE}")
+        log.info(f"Scan interval: {self.config.SCAN_INTERVAL_SECS}s")
+        log.info("=" * 60)
+
+        await self.learner.load_strategy()
+
+        while True:
+            try:
+                await self.run_cycle()
+            except Exception as e:
+                log.error(f"Cycle error: {e}", exc_info=True)
+
+            log.info(f"Sleeping {self.config.SCAN_INTERVAL_SECS}s until next cycle…")
+            await asyncio.sleep(self.config.SCAN_INTERVAL_SECS)
+
+    async def run_cycle(self):
+        self.cycle += 1
+        log.info(f"\n── Cycle #{self.cycle} ──────────────────────────────")
+
+        settled = await self.executor.resolve_settled_trades(self.db)
+        if settled:
+            log.info(f"Settled {len(settled)} trades, updating learning engine…")
+            await self.learner.update_from_outcomes(settled)
+
+        if self.cycle % 10 == 0:
+            log.info("Running learning update…")
+            await self.learner.refine_strategy()
+
+        markets = await self.scanner.get_markets()
+        log.info(f"Found {len(markets)} markets to analyze")
+
+        traded = 0
+        for market in markets:
+            if self.db.has_open_position(market["id"]):
+                continue
+
+            analysis = await self.analyst.analyze(market)
+            if not analysis:
+                continue
+
+            log.info(
+                f"Market: {market['question'][:60]}…\n"
+                f"  → {analysis['recommendation']} | "
+                f"Confidence: {analysis['confidence']}% | "
+                f"Risk: {analysis['risk_level']}"
+            )
+
+            threshold = self.learner.get_confidence_threshold(market["category"])
+            if analysis["confidence"] >= threshold and analysis["recommendation"] != "HOLD":
+                success = await self.executor.place_trade(market, analysis, self.db)
+                if success:
+                    traded += 1
+                    log.info(f"  ✓ Trade placed!")
+
+            await asyncio.sleep(1)
+
+        log.info(f"Cycle #{self.cycle} complete — {traded} trades placed")
+        self._log_stats()
+
+    def _log_stats(self):
+        stats = self.db.get_stats()
+        log.info(
+            f"Stats → Total: {stats['total_trades']} | "
+            f"Win rate: {stats['win_rate']:.1f}% | "
+            f"P&L: ${stats['total_pnl']:.2f} | "
+            f"Open: {stats['open_positions']}"
+        )
+
+
+if __name__ == "__main__":
+    agent = PolyAgent()
+    asyncio.run(agent.run())
