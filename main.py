@@ -263,7 +263,7 @@ suggested_size_pct: 0.25-1.0"""
         async with aiohttp.ClientSession() as session:
             async with session.post(ANTHROPIC_API,
                 headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
-                json={"model":"claude-sonnet-4-20250514","max_tokens":600,
+                json={"model":"claude-opus-4-6","max_tokens":600,
                       "messages":[{"role":"user","content":prompt}]},
                 timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
