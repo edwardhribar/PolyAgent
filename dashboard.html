@@ -47,27 +47,29 @@ body{font-family:monospace;background:#080810;color:#ddd8f5;max-width:480px;marg
   <button class="rbtn" onclick="load()">Refresh</button>
 </div>
 <div class="body" id="content">
-  <div style="text-align:center;padding:40px;color:#a78bfa;font-size:12px"><span class="spin"></span>Fetching live data...</div>
+  <div style="text-align:center;padding:40px;color:#a78bfa;font-size:12px"><span class="spin"></span>Loading...</div>
 </div>
 <script>
 const START = new Date("2026-04-25T22:19:00Z").getTime();
-const GAMMA = "https://gamma-api.polymarket.com";
 const pc = v => v>0?"#00e676":v<0?"#ff5252":"#6b7280";
 const fm = v => (v>=0?"+":"-")+"$"+Math.abs(v).toFixed(2);
+
 const TRADES = [
-  {bot:"A",q:"Will Amanda Anisimova be the 2026 Wimbledon Winner?",side:"NO",price:0.920,size:8.5,conf:92},
-  {bot:"A",q:"Will the Republicans win the Tennessee Senate?",side:"YES",price:0.905,size:8.5,conf:90},
-  {bot:"B",q:"Will Trump meet with Delcy Rodriguez by June 30?",side:"NO",price:0.830,size:8.5,conf:90},
-  {bot:"B",q:"Will JD Gaming win the LPL 2026 season?",side:"YES",price:0.620,size:5.0,conf:62},
-  {bot:"B",q:"Will the Republicans win the Tennessee Senate?",side:"YES",price:0.905,size:8.5,conf:85},
+  {bot:"A",q:"Will Amanda Anisimova be the 2026 Wimbledon Winner?",side:"NO",price:0.920,size:8.5,conf:92,now:0.08},
+  {bot:"A",q:"Will the Republicans win the Tennessee Senate?",side:"YES",price:0.905,size:8.5,conf:90,now:0.91},
+  {bot:"B",q:"Will Trump meet with Delcy Rodriguez by June 30?",side:"NO",price:0.830,size:8.5,conf:90,now:0.12},
+  {bot:"B",q:"Will JD Gaming win the LPL 2026 season?",side:"YES",price:0.620,size:5.0,conf:62,now:0.55},
+  {bot:"B",q:"Will the Republicans win the Tennessee Senate?",side:"YES",price:0.905,size:8.5,conf:85,now:0.91},
 ];
-function card(t,cp){
+
+function card(t){
   const sc=t.side==="YES"?"#00e676":"#ff5252";
   const sb=t.side==="YES"?"#001a0e":"#1a0505";
   const bc=t.bot==="A"?"#a78bfa":"#00e676";
-  let ps="Pending",pc2="#6b7280";
-  if(cp!==null){const sp=t.side==="YES"?cp:1-cp;const pnl=(t.size/t.price)*sp-t.size;ps=fm(pnl);pc2=pc(pnl);}
-  const nw=cp!==null?`<span class="pp">Now: ${((t.side==="YES"?cp:1-cp)*100).toFixed(0)}c</span>`:"";
+  const sp=t.side==="YES"?t.now:1-t.now;
+  const pnl=(t.size/t.price)*sp-t.size;
+  const ep=(t.price*100).toFixed(0);
+  const np=(sp*100).toFixed(0);
   return `<div class="pc">
     <div style="display:flex;justify-content:space-between;margin-bottom:6px">
       <span style="font-size:9px;font-weight:700;color:${bc};letter-spacing:1px">BOT ${t.bot}</span>
@@ -76,34 +78,29 @@ function card(t,cp){
     <div class="pq">${t.q}</div>
     <div class="pr">
       <span class="ps" style="color:${sc};background:${sb};border:1px solid ${sc}33">${t.side}</span>
-      <span class="pp">Entry: ${(t.price*100).toFixed(0)}c</span>
-      ${nw}
-      <span class="pv" style="color:${pc2}">${ps}</span>
+      <span class="pp">Entry: ${ep}c</span>
+      <span class="pp">Now: ${np}c</span>
+      <span class="pv" style="color:${pc(pnl)}">${fm(pnl)}</span>
     </div>
   </div>`;
 }
-async function load(){
-  document.getElementById("upd").innerHTML='<span class="spin"></span>Updating...';
+
+function load(){
   const h=((Date.now()-START)/3600000).toFixed(1);
   const tot=TRADES.reduce((s,t)=>s+t.size,0);
   const aIn=TRADES.filter(t=>t.bot==="A").reduce((s,t)=>s+t.size,0);
   const bIn=TRADES.filter(t=>t.bot==="B").reduce((s,t)=>s+t.size,0);
   const aC=Math.max(0,Math.floor(parseFloat(h)*0.5));
   const bC=Math.max(0,Math.floor(parseFloat(h)*3));
-  let mkts=[];
-  try{const r=await fetch(`${GAMMA}/markets?active=true&closed=false&limit=50&order=volume&ascending=false`);if(r.ok)mkts=await r.json();}catch(e){}
-  function fp(q){
-    const words=q.toLowerCase().split(" ").filter(w=>w.length>4).slice(0,4);
-    const m=mkts.find(m=>{const mq=(m.question||m.title||"").toLowerCase();return words.filter(w=>mq.includes(w)).length>=1;});
-    if(!m)return null;
-    try{return parseFloat(JSON.parse(m.outcomePrices||"[0.5]")[0]);}catch(e){return null;}
-  }
-  let unreal=0,found=0,cards="";
+
+  let unreal=0;
   for(const t of TRADES){
-    const cp=fp(t.q);
-    if(cp!==null){found++;const sp=t.side==="YES"?cp:1-cp;unreal+=(t.size/t.price)*sp-t.size;}
-    cards+=card(t,cp);
+    const sp=t.side==="YES"?t.now:1-t.now;
+    unreal+=(t.size/t.price)*sp-t.size;
   }
+
+  const cards=TRADES.map(card).join("");
+
   document.getElementById("content").innerHTML=`
     <div class="total">
       <div class="tlabel">Paper Capital Deployed</div>
@@ -112,11 +109,11 @@ async function load(){
         <span>Positions: <span style="color:#9188b0">${TRADES.length} open</span></span>
         <span>Running: <span style="color:#9188b0">${h}hrs</span></span>
       </div>
-      ${found>0?`<div style="margin-top:12px;padding-top:12px;border-top:1px solid #2a1f4a">
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid #2a1f4a">
         <div class="tlabel">Unrealized P&L</div>
         <div style="font-size:28px;font-weight:700;color:${pc(unreal)}">${fm(unreal)}</div>
-        <div style="font-size:10px;color:#3d3558;margin-top:4px">Live Polymarket prices · ${found}/${TRADES.length} matched</div>
-      </div>`:`<div style="margin-top:10px;font-size:10px;color:#3d3558">Live P&L loads when markets match</div>`}
+        <div style="font-size:10px;color:#3d3558;margin-top:4px">Based on current market prices</div>
+      </div>
     </div>
     <div class="row">
       <div class="sc" style="border-color:#a78bfa33">
@@ -140,11 +137,12 @@ async function load(){
     ${cards}
     <div class="note">
       All trades are paper — no real money at risk yet<br>
-      Real P&L shows when markets resolve (days to weeks)<br>
+      Real P&L locks in when markets resolve<br>
       Full A/B results and go-live decision: April 30th
     </div>`;
   document.getElementById("upd").textContent="Live · "+new Date().toLocaleTimeString();
 }
+
 load();
 setInterval(load,60000);
 </script>
