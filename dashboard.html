@@ -94,7 +94,7 @@ async function load(){
   try{const r=await fetch(`${GAMMA}/markets?active=true&closed=false&limit=50&order=volume&ascending=false`);if(r.ok)mkts=await r.json();}catch(e){}
   function fp(q){
     const words=q.toLowerCase().split(" ").filter(w=>w.length>4).slice(0,4);
-    const m=mkts.find(m=>{const mq=(m.question||m.title||"").toLowerCase();return words.filter(w=>mq.includes(w)).length>=2;});
+    const m=mkts.find(m=>{const mq=(m.question||m.title||"").toLowerCase();return words.filter(w=>mq.includes(w)).length>=1;});
     if(!m)return null;
     try{return parseFloat(JSON.parse(m.outcomePrices||"[0.5]")[0]);}catch(e){return null;}
   }
