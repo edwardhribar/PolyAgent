@@ -175,7 +175,7 @@ Respond ONLY with valid JSON:
         async with aiohttp.ClientSession() as s:
             async with s.post(ANT_API,
                 headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
-                json={"model":"claude-sonnet-4-6","max_tokens":300,
+                json={"model":"claude-sonnet-4-5-20250929","max_tokens":300,
                       "messages":[{"role":"user","content":prompt}]},
                 timeout=aiohttp.ClientTimeout(total=30)) as r:
                 if r.status != 200:
@@ -277,7 +277,7 @@ async def main():
     db = DB(); db_g = db
     threading.Thread(target=api_thread, daemon=True).start()
     log.info(f"[{BOT_NAME}] Starting | Paper:{PAPER_MODE} | Port:{API_PORT}")
-    log.info(f"Model: claude-sonnet-4-6 | Confidence: {BASE_CONFIDENCE}%")
+    log.info(f"Model: claude-sonnet-4-5-20250929| Confidence: {BASE_CONFIDENCE}%")
 
     cycle = 0
     while True:
