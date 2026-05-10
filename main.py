@@ -1,6 +1,5 @@
 """
-PolyAgent Conservative Bot + Live API Server
-Runs the trading bot AND serves real trade data at /api/stats
+PolyAgent Conservative Bot + Live API Server - Fixed Resolution
 """
 
 import os, json, logging, asyncio, aiohttp, sqlite3, threading
@@ -35,8 +34,8 @@ ANT_API   = "https://api.anthropic.com/v1/messages"
 
 KEYWORDS = {
     "Politics":     ["politics","election","president","congress","vote","government","senate","republican","democrat"],
-    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","super bowl","world cup","playoff"],
-    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","defi","token","blockchain"],
+    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","super bowl","world cup","playoff","relegated"],
+    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","defi","token","blockchain","price"],
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
 
@@ -72,21 +71,29 @@ class DB:
             return cur.lastrowid
 
     def open_trades(self):
-        with self._c() as db: return [dict(r) for r in db.execute("SELECT * FROM trades WHERE status='open'").fetchall()]
+        with self._c() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM trades WHERE status='open'").fetchall()]
+
     def get(self, tid):
         with self._c() as db:
-            r = db.execute("SELECT * FROM trades WHERE id=?", (tid,)).fetchone()
+            r = db.execute("SELECT * FROM trades WHERE id=?",(tid,)).fetchone()
             return dict(r) if r else None
+
     def resolve(self, tid, won, payout):
         t = self.get(tid); pnl = payout - t["size"]
         with self._c() as db:
             db.execute("UPDATE trades SET status=?,outcome=?,pnl=?,resolved_at=? WHERE id=?",
                        ("won" if won else "lost",payout,pnl,datetime.now(timezone.utc).isoformat(),tid))
+        log.info(f"[{BOT_NAME}] #{tid} {'WON' if won else 'LOST'} P&L:${pnl:.2f}")
+
     def has_open(self, mid):
         with self._c() as db:
             return db.execute("SELECT id FROM trades WHERE market_id=? AND status='open'",(mid,)).fetchone() is not None
+
     def recent(self, n=10):
-        with self._c() as db: return [dict(r) for r in db.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?",(n,)).fetchall()]
+        with self._c() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?",(n,)).fetchall()]
+
     def stats(self):
         with self._c() as db:
             tot = db.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
@@ -110,16 +117,19 @@ class API(BaseHTTPRequestHandler):
         self.end_headers()
         if self.path == "/api/stats":
             s = db_g.stats(); t = db_g.recent(10)
-            payload = {**s,"recent_trades":[{"question":x["question"][:60],"side":x["side"],"price":x["price"],
-                "size":x["size"],"confidence":x["confidence"],"status":x["status"],"pnl":x["pnl"],"placed_at":x["placed_at"]} for x in t]}
+            payload = {**s,"recent_trades":[{
+                "question":x["question"][:60],"side":x["side"],"price":x["price"],
+                "size":x["size"],"confidence":x["confidence"],"status":x["status"],
+                "pnl":x["pnl"],"placed_at":x["placed_at"]} for x in t]}
             self.wfile.write(json.dumps(payload).encode())
-        else: self.wfile.write(b'{"status":"ok"}')
+        else:
+            self.wfile.write(b'{"status":"ok"}')
     def log_message(self, *a): pass
 
 def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
-async def markets():
+async def fetch_markets():
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(f"{GAMMA_API}/markets",
@@ -127,115 +137,170 @@ async def markets():
                 timeout=aiohttp.ClientTimeout(total=15)) as r:
                 if r.status != 200: return []
                 data = await r.json()
-    except Exception as e: log.error(f"Fetch: {e}"); return []
+    except Exception as e:
+        log.error(f"Fetch: {e}"); return []
     out = []
     for m in data:
         try:
-            vol = float(m.get("volume") or 0); liq = float(m.get("liquidity") or 0)
-            if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
-            yp = 0.5
-            try: yp = float(json.loads(m.get("outcomePrices") or "[0.5]")[0])
+            vol=float(m.get("volume") or 0); liq=float(m.get("liquidity") or 0)
+            if vol<MIN_VOLUME or liq<MIN_LIQUIDITY: continue
+            yp=0.5
+            try: yp=float(json.loads(m.get("outcomePrices") or "[0.5]")[0])
             except: pass
-            if yp < 0.05 or yp > 0.95: continue
-            txt = (m.get("question") or m.get("title") or "").lower()
-            cat = "World Events"
-            for c, kw in KEYWORDS.items():
-                if any(k in txt for k in kw): cat = c; break
-            out.append({"id":m.get("id") or m.get("conditionId"),"question":m.get("question") or m.get("title") or "Unknown",
-                "yes_price":yp,"no_price":1-yp,"volume":vol,"liquidity":liq,"end_date":m.get("endDate"),"category":cat})
+            if yp<0.05 or yp>0.95: continue
+            txt=(m.get("question") or m.get("title") or "").lower()
+            cat="World Events"
+            for c,kw in KEYWORDS.items():
+                if any(k in txt for k in kw): cat=c; break
+            out.append({"id":m.get("id") or m.get("conditionId"),
+                "question":m.get("question") or m.get("title") or "Unknown",
+                "yes_price":yp,"no_price":1-yp,"volume":vol,"liquidity":liq,
+                "end_date":m.get("endDate"),"category":cat})
         except: continue
     return out[:MARKETS_PER_SCAN]
 
 async def analyze(market, stats, ctx=""):
     if not ANTHROPIC_KEY: return None
-    prompt = f"""Prediction market trading agent. Maximize profit.
+    prompt = f"""You are an autonomous prediction market trading agent maximizing profit.
+
 Market: "{market['question']}"
-YES: {market['yes_price']:.3f} | NO: {market['no_price']:.3f}
+YES: {market['yes_price']:.3f} ({market['yes_price']*100:.1f}%)
+NO: {market['no_price']:.3f}
 Volume: ${market['volume']:,.0f} | Category: {market['category']}
 Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | ${stats['total_pnl']:.2f} P&L
-{f"Strategy: {ctx}" if ctx else ""}
+
 Respond ONLY with valid JSON:
 {{"recommendation":"BUY_YES","confidence":78,"edge":"reason","reasoning":"2 sentences.","risk_level":"MEDIUM","fair_value":0.72,"suggested_size_pct":0.5}}"""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(ANT_API,
                 headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
-                json={"model":"claude-opus-4-6","max_tokens":300,"messages":[{"role":"user","content":prompt}]},
+                json={"model":"claude-sonnet-4-6","max_tokens":300,
+                      "messages":[{"role":"user","content":prompt}]},
                 timeout=aiohttp.ClientTimeout(total=30)) as r:
-                if r.status != 200: return None
+                if r.status != 200:
+                    log.warning(f"Anthropic {r.status}"); return None
                 d = await r.json()
-        txt = "".join(b.get("text","") for b in d.get("content",[]))
-        res = json.loads(txt.replace("```json","").replace("```","").strip())
+        txt="".join(b.get("text","") for b in d.get("content",[]))
+        res=json.loads(txt.replace("```json","").replace("```","").strip())
         assert res.get("recommendation") in ("BUY_YES","BUY_NO","HOLD")
-        res["category"] = market.get("category"); return res
-    except Exception as e: log.error(f"AI: {e}"); return None
+        res["category"]=market.get("category"); return res
+    except Exception as e:
+        log.error(f"AI: {e}"); return None
 
-async def trade(market, analysis, db):
-    side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
-    price = market["yes_price"] if side == "YES" else market["no_price"]
-    size = round(MAX_TRADE * analysis.get("suggested_size_pct",1.0), 2)
-    if db.stats()["open_positions"] >= MAX_POSITIONS: return False
+async def do_trade(market, analysis, db):
+    side="YES" if analysis["recommendation"]=="BUY_YES" else "NO"
+    price=market["yes_price"] if side=="YES" else market["no_price"]
+    size=round(MAX_TRADE*analysis.get("suggested_size_pct",1.0),2)
+    if db.stats()["open_positions"]>=MAX_POSITIONS: return False
     if PAPER_MODE:
-        tid = db.record(market, analysis, size, paper=True)
-        log.info(f"PAPER #{tid}: {side} '{market['question'][:50]}' @ {price:.3f} ${size}"); return True
+        tid=db.record(market,analysis,size,paper=True)
+        log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' @ {price:.3f} ${size}")
+        return True
     if not POLY_API_KEY: return False
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(f"{CLOB_API}/order",
                 headers={"Content-Type":"application/json","POLY_ADDRESS":WALLET,"POLY_API_KEY":POLY_API_KEY},
-                json={"market":market["id"],"side":"BUY","outcome":side,"price":round(price,4),"size":size,"orderType":"GTC"},
+                json={"market":market["id"],"side":"BUY","outcome":side,
+                      "price":round(price,4),"size":size,"orderType":"GTC"},
                 timeout=aiohttp.ClientTimeout(total=15)) as r:
-                d = await r.json()
+                d=await r.json()
                 if r.status==200 and d.get("orderId"):
-                    db.record(market, analysis, size, paper=False, order_id=d["orderId"]); return True
+                    db.record(market,analysis,size,paper=False,order_id=d["orderId"]); return True
                 return False
-    except: return False
+    except Exception as e:
+        log.error(f"Trade: {e}"); return False
 
-async def resolve(db):
+async def resolve_settled(db):
+    open_trades = db.open_trades()
+    if not open_trades: return []
     settled = []
-    for t in db.open_trades():
+    log.info(f"Checking resolution for {len(open_trades)} open trades...")
+
+    for trade in open_trades:
+        mid = trade["market_id"]
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.get(f"{GAMMA_API}/markets/{t['market_id']}",timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    if r.status!=200: continue
-                    m = await r.json()
-            if not m.get("closed") and not m.get("resolved"): continue
-            w = m.get("winningOutcome","").upper()
-            if not w: continue
-            won = t["side"]==w; payout = t["size"]/t["price"] if won else 0.0
-            db.resolve(t["id"],won,payout); settled.append({**t,"won":won})
-        except: continue
+                # Try direct market lookup
+                async with s.get(f"{GAMMA_API}/markets/{mid}",
+                    timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status != 200: continue
+                    market = await r.json()
+
+            # Multiple ways to detect resolution
+            is_resolved = (
+                market.get("resolved") == True or
+                market.get("closed") == True or
+                bool(market.get("winningOutcome")) or
+                bool(market.get("resolutionTime"))
+            )
+
+            if not is_resolved:
+                log.debug(f"Not resolved: {trade['question'][:40]}")
+                continue
+
+            # Get winning outcome
+            winning = (market.get("winningOutcome") or "").upper().strip()
+
+            # Fallback: check outcome prices (winner has price ~1.0)
+            if not winning:
+                try:
+                    prices = json.loads(market.get("outcomePrices") or "[]")
+                    outcomes = market.get("outcomes") or ["YES", "NO"]
+                    if prices:
+                        max_idx = prices.index(max(float(p) for p in prices))
+                        winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
+                except: pass
+
+            if not winning:
+                log.warning(f"Could not determine winner for {mid}")
+                continue
+
+            won = trade["side"].upper() == winning
+            payout = trade["size"] / trade["price"] if won else 0.0
+            db.resolve(trade["id"], won, payout)
+            settled.append({**trade, "won": won, "payout": payout})
+
+        except Exception as e:
+            log.debug(f"Resolution check failed for {mid}: {e}")
+            continue
+
+    if settled:
+        log.info(f"Resolved {len(settled)} trades!")
     return settled
 
 THRESH = {"Politics":75,"Sports":75,"Crypto":75,"World Events":75}
-thresh_ctx = ""
 
 async def main():
     global db_g
     db = DB(); db_g = db
     threading.Thread(target=api_thread, daemon=True).start()
     log.info(f"[{BOT_NAME}] Starting | Paper:{PAPER_MODE} | Port:{API_PORT}")
+    log.info(f"Model: claude-sonnet-4-6 | Confidence: {BASE_CONFIDENCE}%")
+
     cycle = 0
     while True:
         try:
             cycle += 1
             log.info(f"\n── Cycle #{cycle} ──")
-            await resolve(db)
-            mkts = await markets()
+            settled = await resolve_settled(db)
+            mkts = await fetch_markets()
             log.info(f"Analyzing {len(mkts)} markets...")
             traded = 0
             for m in mkts:
                 if db.has_open(m["id"]): continue
                 s = db.stats()
-                a = await analyze(m, s, thresh_ctx)
+                a = await analyze(m, s)
                 if not a: continue
                 log.info(f"  {m['question'][:50]} → {a['recommendation']} | {a['confidence']}%")
                 if a["confidence"] >= THRESH.get(m["category"],75) and a["recommendation"] != "HOLD":
-                    if await trade(m, a, db): traded += 1
+                    if await do_trade(m, a, db): traded += 1
                 await asyncio.sleep(1)
             s = db.stats()
-            log.info(f"Cycle #{cycle} — {traded} trades | WR:{s['win_rate']:.1f}% | P&L:${s['total_pnl']:.2f}")
-        except Exception as e: log.error(f"Cycle error: {e}", exc_info=True)
+            log.info(f"Cycle #{cycle} — {traded} new | WR:{s['win_rate']:.1f}% | P&L:${s['total_pnl']:.2f} | Open:{s['open_positions']}")
+        except Exception as e:
+            log.error(f"Cycle error: {e}", exc_info=True)
         await asyncio.sleep(SCAN_INTERVAL)
 
 if __name__ == "__main__":
