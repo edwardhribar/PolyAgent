@@ -25,7 +25,7 @@ SCAN_INTERVAL  = int(os.getenv("SCAN_INTERVAL_SECS", "120"))
 MIN_WHALE_SIZE = float(os.getenv("MIN_WHALE_SIZE", "50"))
 API_PORT       = int(os.getenv("PORT", "8080"))
 BOT_NAME       = "Copycat"
-TARGET_WALLET  = os.getenv("TARGET_WALLET", "0xe1d6b51521bd4365769199f392f9818661bd907")
+TARGET_WALLET  = os.getenv("TARGET_WALLET", "0xe1D6b51521Bd4365769199f392F9818661BD907")
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 DATA_API  = "https://data-api.polymarket.com"
