@@ -376,7 +376,18 @@ async def resolve_settled(db):
 
                 if not winning: continue
 
-                won = trade["side"].upper() == winning
+                outcomes = market.get("outcomes") or ["YES","NO"]
+                winning_idx = None
+                for i, o in enumerate(outcomes):
+                    if str(o).upper().strip() == winning:
+                        winning_idx = i
+                        break
+                our_side = trade["side"].upper()
+                if winning_idx is not None:
+                    won = (our_side == "YES" and winning_idx == 0) or (our_side == "NO" and winning_idx == 1)
+                else:
+                    won = our_side == winning
+                log.info(f"[{BOT_NAME}] Resolving: side={our_side} winning={winning} outcomes={outcomes} idx={winning_idx} won={won}")
                 payout = trade["size"] / trade["price"] if won else 0.0
                 pnl = db.resolve(trade["id"], won, payout)
                 settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
