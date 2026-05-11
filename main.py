@@ -1,7 +1,7 @@
 """
-PolyAgent Conservative Bot v4
-- Uses Polymarket API date filtering (reliable)
-- 72hr markets only
+PolyAgent Conservative Bot v5
+- Fixed resolution: checks closed/archived markets properly
+- Uses Polymarket API date filtering
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
 """
@@ -24,9 +24,9 @@ ANTHROPIC_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 PAPER_MODE      = os.getenv("PAPER_MODE", "true").lower() == "true"
 MAX_TRADE       = float(os.getenv("MAX_TRADE_SIZE", "10"))
 MAX_POSITIONS   = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
-MIN_LIQUIDITY   = float(os.getenv("MIN_LIQUIDITY", "2000"))
-MIN_VOLUME      = float(os.getenv("MIN_VOLUME", "5000"))
-BASE_CONFIDENCE = int(os.getenv("BASE_CONFIDENCE", "75"))
+MIN_LIQUIDITY   = float(os.getenv("MIN_LIQUIDITY", "500"))
+MIN_VOLUME      = float(os.getenv("MIN_VOLUME", "1000"))
+BASE_CONFIDENCE = int(os.getenv("BASE_CONFIDENCE", "60"))
 SCAN_INTERVAL   = int(os.getenv("SCAN_INTERVAL_SECS", "300"))
 MARKETS_PER_SCAN= int(os.getenv("MARKETS_PER_SCAN", "20"))
 MAX_HOURS       = int(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
@@ -41,8 +41,8 @@ ANT_API   = "https://api.anthropic.com/v1/messages"
 
 KEYWORDS = {
     "Politics":     ["politics","election","president","congress","vote","government","senate","republican","democrat"],
-    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","super bowl","world cup","playoff","relegated","tonight","game","match","league"],
-    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach"],
+    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","super bowl","world cup","playoff","relegated","tonight","game","match","league","golden knights","ducks","lakers","celtics"],
+    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
 
@@ -175,9 +175,7 @@ async def fetch_markets():
         async with aiohttp.ClientSession() as s:
             async with s.get(f"{GAMMA_API}/markets", params=params,
                 timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status != 200:
-                    log.warning(f"Gamma API {r.status}")
-                    return []
+                if r.status != 200: return []
                 data = await r.json()
     except Exception as e:
         log.error(f"Fetch: {e}"); return []
@@ -218,7 +216,7 @@ async def analyze(market, stats, strategy_context=""):
     except: pass
 
     strategy_section = f"\n\nLearned strategy:\n{strategy_context}" if strategy_context else ""
-    prompt = f"""You are an autonomous prediction market trading agent. You ONLY trade markets resolving within {MAX_HOURS} hours.
+    prompt = f"""You are an autonomous prediction market trading agent. Trade markets resolving within {MAX_HOURS} hours.
 
 Market: "{market['question']}"
 Closes in: {hours_left}
@@ -230,7 +228,7 @@ Category: {market['category']}
 Performance: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
 {strategy_section}
 
-Analyze this short-term market carefully. Look for clear edges.
+Analyze carefully. Look for clear edges.
 Respond ONLY with valid JSON:
 {{"recommendation":"BUY_YES","confidence":78,"edge":"brief reason","reasoning":"2 sentences.","risk_level":"MEDIUM","fair_value":0.72,"suggested_size_pct":0.5}}"""
 
@@ -257,7 +255,7 @@ async def do_trade(market, analysis, db):
     if db.stats()["open_positions"] >= MAX_POSITIONS: return False
     if PAPER_MODE:
         tid = db.record(market, analysis, size, paper=True)
-        log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' closes:{market.get('end_date','?')[:10]} @ {price:.3f} ${size}")
+        log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' closes:{market.get('end_date','?')[:16]} @ {price:.3f} ${size}")
         return True
     if not POLY_API_KEY: return False
     try:
@@ -273,42 +271,103 @@ async def do_trade(market, analysis, db):
     except Exception as e:
         log.error(f"Trade: {e}"); return False
 
+async def check_market_resolved(mid, session):
+    """Try multiple methods to check if a market resolved."""
+    # Method 1: Direct lookup (works for active/recent markets)
+    try:
+        async with session.get(f"{GAMMA_API}/markets/{mid}",
+            timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                market = await r.json()
+                is_resolved = (
+                    market.get("resolved") == True or
+                    market.get("closed") == True or
+                    bool(market.get("winningOutcome")) or
+                    bool(market.get("resolutionTime"))
+                )
+                if is_resolved:
+                    return market
+    except: pass
+
+    # Method 2: Search closed markets (for archived short-term markets)
+    try:
+        async with session.get(f"{GAMMA_API}/markets",
+            params={"id": mid, "closed": "true"},
+            timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data and len(data) > 0:
+                    return data[0]
+    except: pass
+
+    # Method 3: Search archived markets
+    try:
+        async with session.get(f"{GAMMA_API}/markets",
+            params={"id": mid, "archived": "true"},
+            timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data and len(data) > 0:
+                    return data[0]
+    except: pass
+
+    return None
+
 async def resolve_settled(db):
     open_trades = db.open_trades()
     if not open_trades: return []
     settled = []
-    for trade in open_trades:
-        mid = trade["market_id"]
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"{GAMMA_API}/markets/{mid}",timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    if r.status != 200: continue
-                    market = await r.json()
-            is_resolved = (market.get("resolved")==True or market.get("closed")==True or
-                           bool(market.get("winningOutcome")) or bool(market.get("resolutionTime")))
-            if not is_resolved: continue
-            winning = (market.get("winningOutcome") or "").upper().strip()
-            if not winning:
-                try:
-                    prices = json.loads(market.get("outcomePrices") or "[]")
-                    outcomes = market.get("outcomes") or ["YES","NO"]
-                    if prices:
-                        max_idx = prices.index(max(float(p) for p in prices))
-                        winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
-                except: pass
-            if not winning: continue
-            won = trade["side"].upper() == winning
-            payout = trade["size"] / trade["price"] if won else 0.0
-            pnl = db.resolve(trade["id"], won, payout)
-            settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
-        except Exception as e:
-            log.debug(f"Resolution check failed {mid}: {e}")
+
+    async with aiohttp.ClientSession() as session:
+        for trade in open_trades:
+            mid = trade["market_id"]
+            try:
+                # Skip if market hasn't closed yet based on end_date
+                end_date = trade.get("end_date","")
+                if end_date:
+                    try:
+                        end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                        if datetime.now(timezone.utc) < end_dt:
+                            continue  # Not closed yet, skip
+                    except: pass
+
+                market = await check_market_resolved(mid, session)
+                if not market: continue
+
+                winning = (market.get("winningOutcome") or "").upper().strip()
+
+                # Fallback: use outcome prices (winner is close to 1.0)
+                if not winning:
+                    try:
+                        prices = json.loads(market.get("outcomePrices") or "[]")
+                        outcomes = market.get("outcomes") or ["YES","NO"]
+                        if prices:
+                            float_prices = [float(p) for p in prices]
+                            max_val = max(float_prices)
+                            if max_val > 0.95:  # Clear winner
+                                max_idx = float_prices.index(max_val)
+                                winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
+                    except: pass
+
+                if not winning:
+                    log.debug(f"No winner found for {mid}")
+                    continue
+
+                won = trade["side"].upper() == winning
+                payout = trade["size"] / trade["price"] if won else 0.0
+                pnl = db.resolve(trade["id"], won, payout)
+                settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
+                log.info(f"[{BOT_NAME}] ✓ Resolved '{trade['question'][:50]}' → {'WIN' if won else 'LOSS'} ${pnl:.2f}")
+
+            except Exception as e:
+                log.debug(f"Resolution check failed {mid}: {e}")
+
     return settled
 
 async def improve_strategy(db, current_strategy, version):
     resolved = db.get_resolved(50)
     if len(resolved) < 5:
-        log.info(f"[{BOT_NAME}] Not enough resolved trades for strategy review")
+        log.info(f"[{BOT_NAME}] Not enough resolved trades for review")
         return current_strategy, version
     stats = db.stats()
     by_cat = {}
@@ -320,15 +379,14 @@ async def improve_strategy(db, current_strategy, version):
     trade_summary = "\n".join([
         f"- [{t['status'].upper()}] {t['side']} '{t['question'][:50]}' conf={t['confidence']}% P&L=${t.get('pnl') or 0:.2f}"
         for t in resolved[:20]])
-    prompt = f"""Review this Polymarket trading agent that trades markets resolving within {MAX_HOURS} hours.
+    prompt = f"""Review this Polymarket trading agent (trades markets resolving within {MAX_HOURS} hours).
 
-Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total P&L:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
+Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
 By category: {json.dumps(by_cat, indent=2)}
-Recent trades:
-{trade_summary}
+Recent trades: {trade_summary}
 Current strategy v{version}: {current_strategy or "None yet"}
 
-Write an improved strategy. Be specific about which market types have edge.
+Write improved strategy. Be specific about which market types have edge.
 Respond ONLY with valid JSON:
 {{"strategy":"detailed strategy text","key_insight":"main finding","thresholds":{{"Politics":75,"Sports":70,"Crypto":72,"World Events":75}},"version":{version+1}}}"""
     try:
@@ -356,7 +414,7 @@ async def main():
     global db_g
     db = DB(); db_g = db
     threading.Thread(target=api_thread, daemon=True).start()
-    log.info(f"[{BOT_NAME}] Starting v4 | Paper:{PAPER_MODE} | Port:{API_PORT}")
+    log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
     log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{BASE_CONFIDENCE}%")
 
     saved = db.get_latest_strategy()
@@ -369,12 +427,15 @@ async def main():
         try:
             cycle += 1
             log.info(f"\n── Cycle #{cycle} ──")
+
+            # Resolve settled trades
             settled = await resolve_settled(db)
             if settled:
                 log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
                 for t in settled:
                     log.info(f"  {'✓ WON' if t['won'] else '✗ LOST'} ${t.get('pnl',0):.2f} — {t['question'][:50]}")
 
+            # Check strategy improvement
             s = db.stats()
             resolved_total = s["won"] + s["lost"]
             if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
@@ -384,6 +445,7 @@ async def main():
 
             log.info(f"[{BOT_NAME}] Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f} | WR:{s['win_rate']:.1f}% | Open:{s['open_positions']}")
 
+            # Fetch and analyze markets
             mkts = await fetch_markets()
             traded = 0
             for m in mkts:
@@ -392,13 +454,14 @@ async def main():
                 if s["open_positions"] >= MAX_POSITIONS: break
                 a = await analyze(m, s, strategy_context)
                 if not a: continue
-                log.info(f"  '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[:10]}")
+                log.info(f"  '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[11:16]}")
                 if a["confidence"] >= BASE_CONFIDENCE and a["recommendation"] != "HOLD":
                     if await do_trade(m, a, db): traded += 1
                 await asyncio.sleep(1)
 
             s = db.stats()
             log.info(f"Cycle #{cycle} done — {traded} new | Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f}")
+
         except Exception as e:
             log.error(f"Cycle error: {e}", exc_info=True)
         await asyncio.sleep(SCAN_INTERVAL)
