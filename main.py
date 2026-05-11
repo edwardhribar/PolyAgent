@@ -248,10 +248,35 @@ Respond ONLY with valid JSON:
     except Exception as e:
         log.error(f"AI: {e}"); return None
 
+def kelly_size(analysis, price, max_bet):
+    """
+    Kelly Criterion: f* = (bp - q) / b
+    b = odds received (1/price - 1)
+    p = our estimated probability (fair_value)
+    q = 1 - p
+    Capped at MAX_TRADE, floored at 25% of MAX_TRADE.
+    Half-Kelly used for safety (f* / 2).
+    """
+    try:
+        fair = float(analysis.get("fair_value") or price)
+        fair = max(0.05, min(0.95, fair))
+        p = fair
+        q = 1 - p
+        b = (1 / price) - 1  # decimal odds
+        if b <= 0: return round(max_bet * 0.25, 2)
+        full_kelly = (b * p - q) / b
+        half_kelly = full_kelly / 2  # half-Kelly for safety
+        fraction = max(0.25, min(1.0, half_kelly))
+        size = round(max_bet * fraction, 2)
+        return max(size, round(max_bet * 0.25, 2))
+    except:
+        return round(max_bet * 0.5, 2)
+
 async def do_trade(market, analysis, db):
     side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
     price = market["yes_price"] if side == "YES" else market["no_price"]
-    size = round(MAX_TRADE * analysis.get("suggested_size_pct",1.0), 2)
+    size = kelly_size(analysis, price, MAX_TRADE)
+    log.info(f"[{BOT_NAME}] Kelly size: ${size} (fair_value:{analysis.get('fair_value','?')} price:{price:.3f})")
     if db.stats()["open_positions"] >= MAX_POSITIONS: return False
     if PAPER_MODE:
         tid = db.record(market, analysis, size, paper=True)
