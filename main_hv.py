@@ -36,7 +36,7 @@ MAX_HOURS       = int(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
 IMPROVE_EVERY   = int(os.getenv("IMPROVE_EVERY", "20"))
 API_PORT        = int(os.getenv("PORT", "8080"))
 BOT_NAME        = "HV"
-MODEL           = "claude-sonnet-4-5-20250929"
+MODEL           = "claude-sonnet-4-6"
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
