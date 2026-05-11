@@ -1,10 +1,9 @@
 """
-PolyAgent HV Bot v4
-- Uses Polymarket API date filtering (reliable)
-- 72hr markets only
+PolyAgent HV Bot v5
+- Fixed resolution: checks closed/archived markets properly
+- Handles 5-minute crypto markets and other short-term markets
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
-- Two-tier: price monitor every 5s + AI deep scan every 30s
 """
 
 import os, json, logging, asyncio, aiohttp, sqlite3, threading
@@ -25,14 +24,14 @@ ANTHROPIC_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 PAPER_MODE      = os.getenv("PAPER_MODE", "true").lower() == "true"
 MAX_TRADE       = float(os.getenv("MAX_TRADE_SIZE", "10"))
 MAX_POSITIONS   = int(os.getenv("MAX_OPEN_POSITIONS", "25"))
-MIN_LIQUIDITY   = float(os.getenv("MIN_LIQUIDITY", "2000"))
-MIN_VOLUME      = float(os.getenv("MIN_VOLUME", "5000"))
-CONFIDENCE_MIN  = int(os.getenv("BASE_CONFIDENCE", "55"))
+MIN_LIQUIDITY   = float(os.getenv("MIN_LIQUIDITY", "500"))
+MIN_VOLUME      = float(os.getenv("MIN_VOLUME", "1000"))
+CONFIDENCE_MIN  = int(os.getenv("BASE_CONFIDENCE", "40"))
 PRICE_SCAN_SECS = int(os.getenv("PRICE_SCAN_SECS", "5"))
 DEEP_SCAN_SECS  = int(os.getenv("DEEP_SCAN_SECS", "30"))
 MARKETS_PER_SCAN= int(os.getenv("MARKETS_PER_SCAN", "50"))
 PRICE_SPIKE_PCT = float(os.getenv("PRICE_SPIKE_PCT", "3.0"))
-MAX_AI_PER_MIN  = int(os.getenv("MAX_AI_PER_MIN", "20"))
+MAX_AI_PER_MIN  = int(os.getenv("MAX_AI_PER_MIN", "5"))
 MAX_HOURS       = int(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
 IMPROVE_EVERY   = int(os.getenv("IMPROVE_EVERY", "20"))
 API_PORT        = int(os.getenv("PORT", "8080"))
@@ -45,8 +44,8 @@ ANT_API   = "https://api.anthropic.com/v1/messages"
 
 KEYWORDS = {
     "Politics":     ["politics","election","president","congress","vote","government","senate","republican","democrat"],
-    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","world cup","playoff","relegated","tonight","game","match","league"],
-    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach"],
+    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","world cup","playoff","relegated","tonight","game","match","league","golden knights","ducks","lakers","celtics"],
+    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
 
@@ -91,11 +90,6 @@ class DB:
         with self._c() as db:
             db.execute("INSERT INTO prices (market_id,yes_price,recorded_at) VALUES (?,?,?)",
                        (mid,yp,datetime.now(timezone.utc).isoformat()))
-
-    def last_price(self, mid):
-        with self._c() as db:
-            r = db.execute("SELECT yes_price FROM prices WHERE market_id=? ORDER BY id DESC LIMIT 1",(mid,)).fetchone()
-            return r["yes_price"] if r else None
 
     def open_trades(self):
         with self._c() as db:
@@ -237,7 +231,7 @@ async def analyze(market, stats, strategy_context="", trigger="deep_scan"):
 
     urg = "URGENT - price just spiked" if trigger=="price_spike" else "routine scan"
     strategy_section = f"\n\nLearned strategy:\n{strategy_context}" if strategy_context else ""
-    prompt = f"""Aggressive prediction market trader. Only trade markets resolving within {MAX_HOURS} hours.
+    prompt = f"""Aggressive prediction market trader. Trade markets resolving within {MAX_HOURS} hours.
 
 Market: "{market['question']}"
 Closes in: {hours_left} | Trigger: {urg}
@@ -274,7 +268,7 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
     if db.stats()["open_positions"] >= MAX_POSITIONS: return False
     if PAPER_MODE:
         tid = db.record(market, analysis, size, trigger=trigger, paper=True)
-        log.info(f"[{BOT_NAME}] PAPER #{tid} [{trigger}]: {side} '{market['question'][:45]}' closes:{market.get('end_date','?')[:10]} @ {price:.3f} ${size}")
+        log.info(f"[{BOT_NAME}] PAPER #{tid} [{trigger}]: {side} '{market['question'][:45]}' closes:{market.get('end_date','?')[11:16]} @ {price:.3f} ${size}")
         return True
     if not POLY_API_KEY: return False
     try:
@@ -289,42 +283,100 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
                 return False
     except: return False
 
+async def check_market_resolved(mid, session):
+    """Try multiple methods to check if a market resolved."""
+    # Method 1: Direct lookup
+    try:
+        async with session.get(f"{GAMMA_API}/markets/{mid}",
+            timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                market = await r.json()
+                is_resolved = (
+                    market.get("resolved") == True or
+                    market.get("closed") == True or
+                    bool(market.get("winningOutcome")) or
+                    bool(market.get("resolutionTime"))
+                )
+                if is_resolved:
+                    return market
+    except: pass
+
+    # Method 2: Search closed markets
+    try:
+        async with session.get(f"{GAMMA_API}/markets",
+            params={"id": mid, "closed": "true"},
+            timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data and len(data) > 0:
+                    return data[0]
+    except: pass
+
+    # Method 3: Search archived markets
+    try:
+        async with session.get(f"{GAMMA_API}/markets",
+            params={"id": mid, "archived": "true"},
+            timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data and len(data) > 0:
+                    return data[0]
+    except: pass
+
+    return None
+
 async def resolve_settled(db):
     open_trades = db.open_trades()
     if not open_trades: return []
     settled = []
-    for trade in open_trades:
-        mid = trade["market_id"]
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"{GAMMA_API}/markets/{mid}",timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    if r.status != 200: continue
-                    market = await r.json()
-            is_resolved = (market.get("resolved")==True or market.get("closed")==True or
-                           bool(market.get("winningOutcome")) or bool(market.get("resolutionTime")))
-            if not is_resolved: continue
-            winning = (market.get("winningOutcome") or "").upper().strip()
-            if not winning:
-                try:
-                    prices = json.loads(market.get("outcomePrices") or "[]")
-                    outcomes = market.get("outcomes") or ["YES","NO"]
-                    if prices:
-                        max_idx = prices.index(max(float(p) for p in prices))
-                        winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
-                except: pass
-            if not winning: continue
-            won = trade["side"].upper() == winning
-            payout = trade["size"] / trade["price"] if won else 0.0
-            pnl = db.resolve(trade["id"], won, payout)
-            settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
-        except Exception as e:
-            log.debug(f"Resolution check failed {mid}: {e}")
+
+    async with aiohttp.ClientSession() as session:
+        for trade in open_trades:
+            mid = trade["market_id"]
+            try:
+                # Skip if market hasn't closed yet
+                end_date = trade.get("end_date","")
+                if end_date:
+                    try:
+                        end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                        if datetime.now(timezone.utc) < end_dt:
+                            continue
+                    except: pass
+
+                market = await check_market_resolved(mid, session)
+                if not market: continue
+
+                winning = (market.get("winningOutcome") or "").upper().strip()
+
+                if not winning:
+                    try:
+                        prices = json.loads(market.get("outcomePrices") or "[]")
+                        outcomes = market.get("outcomes") or ["YES","NO"]
+                        if prices:
+                            float_prices = [float(p) for p in prices]
+                            max_val = max(float_prices)
+                            if max_val > 0.95:
+                                max_idx = float_prices.index(max_val)
+                                winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
+                    except: pass
+
+                if not winning: continue
+
+                won = trade["side"].upper() == winning
+                payout = trade["size"] / trade["price"] if won else 0.0
+                pnl = db.resolve(trade["id"], won, payout)
+                settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
+                log.info(f"[{BOT_NAME}] ✓ {'WIN' if won else 'LOSS'} ${pnl:.2f} — {trade['question'][:50]}")
+
+            except Exception as e:
+                log.debug(f"Resolution check failed {mid}: {e}")
+
     return settled
 
 async def improve_strategy(db, current_strategy, version):
     resolved = db.get_resolved(50)
     if len(resolved) < 5:
-        log.info(f"[{BOT_NAME}] Not enough resolved trades for strategy review")
+        log.info(f"[{BOT_NAME}] Not enough resolved trades for review")
         return current_strategy, version
     stats = db.stats()
     by_cat = {}
@@ -335,9 +387,9 @@ async def improve_strategy(db, current_strategy, version):
         else: by_cat[cat]["lost"]+=1; by_cat[cat]["pnl"]+=t.get("pnl") or 0
         if t.get("trigger")=="price_spike": by_cat[cat]["spike"]+=1
     trade_summary = "\n".join([
-        f"- [{t['status'].upper()}] {t['side']} '{t['question'][:50]}' conf={t['confidence']}% trigger={t.get('trigger','?')} P&L=${t.get('pnl') or 0:.2f}"
+        f"- [{t['status'].upper()}] {t['side']} '{t['question'][:50]}' conf={t['confidence']}% P&L=${t.get('pnl') or 0:.2f}"
         for t in resolved[:20]])
-    prompt = f"""Review this aggressive HV Polymarket bot trading markets within {MAX_HOURS} hours.
+    prompt = f"""Review aggressive HV Polymarket bot (trades within {MAX_HOURS} hours).
 
 Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
 Spike trades: {stats.get('spike_trades',0)}
@@ -347,7 +399,7 @@ Current strategy v{version}: {current_strategy or "None yet"}
 
 Write improved aggressive strategy for short-term markets.
 Respond ONLY with valid JSON:
-{{"strategy":"detailed strategy","key_insight":"main finding","thresholds":{{"Politics":55,"Sports":58,"Crypto":55,"World Events":55}},"version":{version+1}}}"""
+{{"strategy":"detailed strategy","key_insight":"main finding","thresholds":{{"Politics":45,"Sports":42,"Crypto":40,"World Events":45}},"version":{version+1}}}"""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(ANT_API,
@@ -373,7 +425,7 @@ async def main():
     global db_g
     db = DB(); db_g = db
     threading.Thread(target=api_thread, daemon=True).start()
-    log.info(f"[{BOT_NAME}] Starting v4 | Paper:{PAPER_MODE} | Port:{API_PORT}")
+    log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
     log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{CONFIDENCE_MIN}%+")
 
     saved = db.get_latest_strategy()
@@ -415,12 +467,12 @@ async def main():
             deep_due = now + DEEP_SCAN_SECS
             markets = await fetch_markets(); traded = 0
 
+            # Resolve settled trades
             settled = await resolve_settled(db)
             if settled:
                 log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
-                for t in settled:
-                    log.info(f"  {'✓ WON' if t['won'] else '✗ LOST'} ${t.get('pnl',0):.2f} — {t['question'][:50]}")
 
+            # Strategy improvement check
             s = db.stats()
             resolved_total = s["won"] + s["lost"]
             if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
@@ -436,17 +488,13 @@ async def main():
                 if s["open_positions"] >= MAX_POSITIONS: break
                 a = await analyze(m, s, strategy_context, "deep_scan"); ai_pm += 1
                 if not a: continue
-                log.info(f"[{BOT_NAME}] '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[:10]}")
+                log.info(f"[{BOT_NAME}] '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[11:16]}")
                 if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] != "HOLD":
                     if await do_trade(m, a, db, "deep_scan"): traded += 1
                 await asyncio.sleep(0.3)
 
             s = db.stats()
             log.info(f"[{BOT_NAME}] Deep scan — {traded} new | Open:{s['open_positions']} | Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f}")
-
-        if now >= resolve_due:
-            resolve_due = now + 300
-            await resolve_settled(db)
 
         await asyncio.sleep(PRICE_SCAN_SECS)
 
