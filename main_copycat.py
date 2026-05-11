@@ -167,22 +167,30 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_whale_positions():
-    """Fetch current open positions for the target wallet."""
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{DATA_API}/positions",
-                params={"user": TARGET_WALLET, "sizeThreshold": "0.01", "limit": 100},
-                timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status != 200:
-                    log.warning(f"Data API {r.status}")
-                    return []
-                data = await r.json()
-                positions = data if isinstance(data, list) else data.get("positions", [])
-                log.info(f"[{BOT_NAME}] Whale has {len(positions)} active positions")
-                return positions
-    except Exception as e:
-        log.error(f"Whale fetch error: {e}")
-        return []
+    """Fetch current open positions for the target wallet - tries multiple endpoints."""
+    endpoints = [
+        (f"{DATA_API}/positions", {"user": TARGET_WALLET, "limit": 100}),
+        (f"{DATA_API}/positions", {"maker": TARGET_WALLET, "limit": 100}),
+        (f"{DATA_API}/activity", {"user": TARGET_WALLET, "limit": 100}),
+    ]
+    for url, params in endpoints:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, params=params,
+                    timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    if r.status != 200:
+                        log.debug(f"[{BOT_NAME}] {url} → {r.status}")
+                        continue
+                    data = await r.json()
+                    positions = data if isinstance(data, list) else data.get("positions", data.get("data", []))
+                    if positions:
+                        log.info(f"[{BOT_NAME}] Whale has {len(positions)} positions via {url}")
+                        return positions
+        except Exception as e:
+            log.debug(f"[{BOT_NAME}] Fetch error {url}: {e}")
+            continue
+    log.warning(f"[{BOT_NAME}] Could not fetch whale positions - will retry next cycle")
+    return []
 
 async def fetch_market_info(market_id):
     """Get market details from Gamma API."""
