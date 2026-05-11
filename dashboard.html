@@ -15,166 +15,220 @@ body{font-family:monospace;background:#080810;color:#ddd8f5;max-width:480px;marg
 .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00e676;margin-right:6px;animation:pulse 2s infinite;vertical-align:middle}
 .bar{display:flex;justify-content:space-between;align-items:center;padding:8px 18px;border-bottom:1px solid #1a1530;background:#0c0b18;font-size:10px;color:#3d3558}
 .body{padding:14px}
-.total{background:linear-gradient(135deg,#1a0e38,#0e1a38);border:1px solid #2a1f4a;border-radius:14px;padding:16px;margin-bottom:14px}
-.tlabel{font-size:10px;color:#6b5fa0;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px}
-.tpnl{font-size:36px;font-weight:700;letter-spacing:-1px}
-.tmeta{display:flex;gap:16px;margin-top:10px;font-size:11px;color:#6b7280;flex-wrap:wrap}
-.row{display:flex;gap:8px;margin-bottom:14px}
-.sc{background:#0e0c1c;border:1px solid #1a1530;border-radius:12px;padding:12px;flex:1;text-align:center}
-.sl{font-size:9px;color:#4b5563;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
-.sv{font-size:18px;font-weight:700}
-.ss{font-size:10px;color:#4b5563;margin-top:4px}
-.sec{font-size:9px;font-weight:700;color:#3d3558;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;margin-top:14px}
+.rbtn{background:#1a0e38;border:1px solid #3d2060;border-radius:8px;color:#a78bfa;font-size:10px;font-family:monospace;padding:6px 14px;cursor:pointer}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid #3d2060;border-top-color:#a78bfa;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:6px;vertical-align:middle}
+.bigbox{border-radius:14px;padding:18px;margin-bottom:12px}
+.bigbox-label{font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-weight:700}
+.bigbox-amount{font-size:42px;font-weight:700;letter-spacing:-1px;line-height:1}
+.bigbox-sub{font-size:11px;margin-top:8px;opacity:0.7}
+.bigbox-meta{display:flex;gap:16px;margin-top:10px;font-size:11px;flex-wrap:wrap}
 .bcard{border-radius:14px;padding:16px;margin-bottom:12px}
 .bhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.bstats{display:flex;gap:8px;margin-bottom:10px}
-.bstat{flex:1;background:#130e28;border-radius:8px;padding:8px 10px;text-align:center}
+.bstats{display:flex;gap:6px;margin-bottom:10px}
+.bstat{flex:1;background:#130e28;border-radius:8px;padding:8px 6px;text-align:center}
 .bstat-l{font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
-.bstat-v{font-size:16px;font-weight:700}
+.bstat-v{font-size:15px;font-weight:700}
 .wrbar{height:4px;background:#221a40;border-radius:2px;margin:6px 0}
 .wrfill{height:100%;border-radius:2px;background:linear-gradient(90deg,#00e676,#7c3aed)}
 .wrl{display:flex;justify-content:space-between;font-size:10px;margin-bottom:4px}
-.tc{background:#130e28;border:1px solid #1a1530;border-radius:8px;padding:10px;margin-bottom:6px}
-.tq{font-size:11px;color:#ddd8f5;margin-bottom:6px;line-height:1.4}
-.tr{display:flex;justify-content:space-between;align-items:center;gap:4px}
-.ts{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px}
-.tp{font-size:10px;color:#6b7280}
-.tv{font-size:10px;font-weight:700}
 .div{height:1px;background:#1a1530;margin:14px 0}
+.sec{font-size:9px;font-weight:700;color:#3d3558;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;margin-top:14px}
 .note{background:#0e0c1c;border:1px solid #1a1530;border-radius:10px;padding:12px;font-size:10px;color:#4b5563;line-height:1.8;margin-top:14px}
-.rbtn{background:#1a0e38;border:1px solid #3d2060;border-radius:8px;color:#a78bfa;font-size:10px;font-family:monospace;padding:6px 14px;cursor:pointer}
-.spin{display:inline-block;width:10px;height:10px;border:2px solid #3d2060;border-top-color:#a78bfa;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:6px;vertical-align:middle}
-.err{font-size:10px;color:#ff5252;margin-top:6px}
+.offline{color:#ff5252;font-size:10px;margin-left:6px}
+.tabs{display:flex;background:#0c0b18;border-bottom:1px solid #1a1530}
+.tab{flex:1;padding:11px 0;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;background:none;border:none;border-bottom:2px solid transparent;color:#3d3558;font-family:monospace}
+.tab.active{color:#a78bfa;border-bottom-color:#a78bfa}
+.hist-card{border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid}
+.hist-won{background:#001a0e;border-color:#00e67633}
+.hist-lost{background:#1a0505;border-color:#ff525233}
+.hist-open{background:#130e28;border-color:#1a1530}
+.hist-badge{font-size:9px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:1px}
+.hist-q{font-size:12px;margin:6px 0;line-height:1.4}
+.hist-meta{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px}
+.hist-pnl{font-size:16px;font-weight:700}
+.hist-detail{font-size:10px;color:#4b5563}
+.ts{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px}
 </style>
 </head>
 <body>
 <div class="header">
-  <div class="logo">PolyAgent Live</div>
-  <div class="sub"><span class="dot"></span>2 bots trading 24/7 · Real data · Auto-refreshes</div>
+  <div class="logo">⬡ PolyAgent Live</div>
+  <div class="sub"><span class="dot"></span>72hr markets · Self-improving · Paper mode</div>
 </div>
 <div class="bar">
   <span id="upd"><span class="spin"></span>Loading...</span>
   <button class="rbtn" onclick="load()">↻ Refresh</button>
 </div>
-<div class="body" id="content">
-  <div style="text-align:center;padding:40px;color:#a78bfa;font-size:12px"><span class="spin"></span>Connecting to bots...</div>
+<div class="tabs">
+  <button class="tab active" onclick="showTab('overview')" id="tab-overview">Overview</button>
+  <button class="tab" onclick="showTab('history')" id="tab-history">History</button>
+  <button class="tab" onclick="showTab('open')" id="tab-open">Open Bets</button>
 </div>
-
+<div class="body">
+  <div id="tab-overview-content"></div>
+  <div id="tab-history-content" style="display:none"></div>
+  <div id="tab-open-content" style="display:none"></div>
+</div>
 <script>
-// !! REPLACE THESE WITH YOUR ACTUAL RAILWAY URLS !!
-const BOT_A_URL = "https://polyagent-production-118b.up.railway.app";
-const BOT_B_URL = "https://polyagent-production-6dda.up.railway.app";
+const BOT_A_URL="https://polyagent-production-118b.up.railway.app";
+const BOT_B_URL="https://polyagent-production-6dda.up.railway.app";
+const pc=v=>v>0?"#00e676":v<0?"#ff5252":"#6b7280";
+const fm=v=>(v>=0?"+":"-")+"$"+Math.abs(v).toFixed(2);
+const wc=v=>v>=50?"#00e676":"#ff5252";
+let allTrades=[],botA={},botB={};
 
-const pc = v => v>0?"#00e676":v<0?"#ff5252":"#6b7280";
-const fm = v => (v>=0?"+":"-")+"$"+Math.abs(v).toFixed(2);
-const wc = v => v>=50?"#00e676":"#ff5252";
+function showTab(name){
+  ["overview","history","open"].forEach(t=>{
+    document.getElementById(`tab-${t}-content`).style.display=t===name?"block":"none";
+    document.getElementById(`tab-${t}`).classList.toggle("active",t===name);
+  });
+}
 
-async function fetchBot(url, name) {
-  try {
-    const r = await fetch(`${url}/api/stats`, {signal: AbortSignal.timeout(5000)});
-    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+async function fetchBot(url,name){
+  try{
+    const r=await fetch(`${url}/api/stats`,{signal:AbortSignal.timeout(5000)});
+    if(!r.ok)throw new Error();
     return await r.json();
-  } catch(e) {
-    return {error: true, bot: name, total_trades:0, open_positions:0, won:0, lost:0, win_rate:0, total_pnl:0, invested:0, recent_trades:[]};
+  }catch(e){
+    return{error:true,bot:name,total_trades:0,open_positions:0,won:0,lost:0,win_rate:0,total_pnl:0,daily_pnl:0,invested:0,recent_trades:[]};
   }
 }
 
-function botCard(d, color, scan) {
-  const wr = d.win_rate || 0;
-  const pnl = d.total_pnl || 0;
-  const trades = (d.recent_trades || []).slice(0, 3);
-  const tradeRows = trades.map(t => {
-    const sc = t.side==="YES"?"#00e676":"#ff5252";
-    const sb = t.side==="YES"?"#001a0e":"#1a0505";
-    const st = t.status==="open" ? "<span style='color:#6b7280'>OPEN</span>"
-             : t.status==="won"  ? `<span style='color:#00e676'>${fm(t.pnl)}</span>`
-             : `<span style='color:#ff5252'>${fm(t.pnl)}</span>`;
-    return `<div class="tc">
-      <div class="tq">${(t.question||"").slice(0,55)}${t.question&&t.question.length>55?"…":""}</div>
-      <div class="tr">
-        <span class="ts" style="color:${sc};background:${sb};border:1px solid ${sc}33">${t.side}</span>
-        <span class="tp">${(t.price*100||0).toFixed(0)}c · $${t.size||0}</span>
-        <span class="tp">${t.confidence||0}% conf</span>
-        ${st}
-      </div>
-    </div>`;
-  }).join("");
+function histCard(t,botName,botColor){
+  const won=t.status==="won",lost=t.status==="lost",open=t.status==="open";
+  const cls=won?"hist-won":lost?"hist-lost":"hist-open";
+  const bc=won?"#00e676":lost?"#ff5252":"#6b7280";
+  const bb=won?"#001a0e":lost?"#1a0505":"#130e28";
+  const label=won?"✓ WON":lost?"✗ LOST":"● OPEN";
+  const sc=t.side==="YES"?"#00e676":"#ff5252";
+  const sb=t.side==="YES"?"#001a0e":"#1a0505";
+  const pnlStr=open?"":` <span class="hist-pnl" style="color:${pc(t.pnl)}">${fm(t.pnl)}</span>`;
+  const closeStr=t.end_date?t.end_date.slice(11,16)+" UTC":"";
+  return `<div class="hist-card ${cls}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div><span class="hist-badge" style="color:${bc};background:${bb};border:1px solid ${bc}33">${label}</span>
+      <span style="font-size:9px;color:${botColor};margin-left:6px;font-weight:700">${botName}</span></div>
+      ${pnlStr}
+    </div>
+    <div class="hist-q">${(t.question||"").slice(0,65)}${t.question&&t.question.length>65?"…":""}</div>
+    <div class="hist-meta">
+      <span class="ts" style="color:${sc};background:${sb};border:1px solid ${sc}33">${t.side}</span>
+      <span class="hist-detail">${(t.price*100||0).toFixed(0)}c · $${t.size||0}</span>
+      <span class="hist-detail">${t.confidence||0}% conf</span>
+      ${closeStr?`<span class="hist-detail">closes ${closeStr}</span>`:""}
+    </div>
+  </div>`;
+}
 
+function botCard(d,color,scan){
+  const wr=d.win_rate||0,pnl=d.total_pnl||0,dpnl=d.daily_pnl||0;
   return `<div class="bcard" style="background:#0e0c1c;border:1px solid ${color}33">
     <div class="bhead">
-      <span style="font-size:11px;font-weight:700;color:${color};letter-spacing:2px">● ${d.bot||"Bot"} ${d.error?"<span class='err'>offline</span>":""}</span>
-      <span style="font-size:10px;color:#4b5563">${scan} · ${d.paper_mode!==false?"PAPER":"LIVE"}</span>
+      <div><span style="font-size:11px;font-weight:700;color:${color};letter-spacing:2px">● ${d.bot||"Bot"}</span>${d.error?'<span class="offline">offline</span>':""}</div>
+      <span style="font-size:9px;color:#4b5563">${scan} · PAPER</span>
     </div>
     <div class="bstats">
-      <div class="bstat"><div class="bstat-l">P&L</div><div class="bstat-v" style="color:${pc(pnl)}">${fm(pnl)}</div></div>
-      <div class="bstat"><div class="bstat-l">Win Rate</div><div class="bstat-v" style="color:${wc(wr)}">${wr.toFixed(1)}%</div></div>
-      <div class="bstat"><div class="bstat-l">Trades</div><div class="bstat-v" style="color:#ddd8f5">${d.total_trades||0}</div></div>
+      <div class="bstat"><div class="bstat-l">Today</div><div class="bstat-v" style="color:${pc(dpnl)}">${fm(dpnl)}</div></div>
+      <div class="bstat"><div class="bstat-l">Total P&L</div><div class="bstat-v" style="color:${pc(pnl)}">${fm(pnl)}</div></div>
+      <div class="bstat"><div class="bstat-l">Win Rate</div><div class="bstat-v" style="color:${wc(wr)}">${wr.toFixed(0)}%</div></div>
       <div class="bstat"><div class="bstat-l">Open</div><div class="bstat-v" style="color:#a78bfa">${d.open_positions||0}</div></div>
     </div>
     <div class="wrl"><span style="color:#00e676">W: ${d.won||0}</span><span style="color:#ff5252">L: ${d.lost||0}</span></div>
     <div class="wrbar"><div class="wrfill" style="width:${Math.min(100,wr)}%"></div></div>
-    ${trades.length>0?`<div class="sec" style="margin-top:10px">Recent trades</div>${tradeRows}`:"<div style='font-size:10px;color:#3d3558;margin-top:8px;text-align:center'>No trades yet</div>"}
   </div>`;
 }
 
-async function load() {
+async function load(){
   document.getElementById("upd").innerHTML='<span class="spin"></span>Updating...';
-  const [a, b] = await Promise.all([
-    fetchBot(BOT_A_URL, "Conservative"),
-    fetchBot(BOT_B_URL, "HV"),
-  ]);
+  const[a,b]=await Promise.all([fetchBot(BOT_A_URL,"Conservative"),fetchBot(BOT_B_URL,"HV")]);
+  botA=a;botB=b;
+  const tradesA=(a.recent_trades||[]).map(t=>({...t,bot:"A",botColor:"#a78bfa"}));
+  const tradesB=(b.recent_trades||[]).map(t=>({...t,bot:"B",botColor:"#00e676"}));
+  allTrades=[...tradesA,...tradesB].sort((x,y)=>(y.placed_at||"").localeCompare(x.placed_at||""));
+  const totalPnl=(a.total_pnl||0)+(b.total_pnl||0);
+  const dailyPnl=(a.daily_pnl||0)+(b.daily_pnl||0);
+  const totalInv=(a.invested||0)+(b.invested||0);
+  const totalWon=(a.won||0)+(b.won||0);
+  const totalLost=(a.lost||0)+(b.lost||0);
+  const totalRes=totalWon+totalLost;
+  const combinedWr=totalRes>0?(totalWon/totalRes*100):0;
+  const totalOpen=(a.open_positions||0)+(b.open_positions||0);
 
-  const totalPnl = (a.total_pnl||0) + (b.total_pnl||0);
-  const totalTrades = (a.total_trades||0) + (b.total_trades||0);
-  const totalOpen = (a.open_positions||0) + (b.open_positions||0);
-  const totalInvested = (a.invested||0) + (b.invested||0);
-  const combinedWon = (a.won||0) + (b.won||0);
-  const combinedResolved = combinedWon + (a.lost||0) + (b.lost||0);
-  const combinedWr = combinedResolved > 0 ? (combinedWon/combinedResolved*100) : 0;
-
-  document.getElementById("content").innerHTML = `
-    <div class="total">
-      <div class="tlabel">Combined P&L</div>
-      <div class="tpnl" style="color:${pc(totalPnl)}">${fm(totalPnl)}</div>
-      <div class="tmeta">
-        <span>Trades: <span style="color:#9188b0">${totalTrades}</span></span>
-        <span>Open: <span style="color:#9188b0">${totalOpen}</span></span>
-        <span>WR: <span style="color:${wc(combinedWr)}">${combinedWr.toFixed(1)}%</span></span>
-        <span>In play: <span style="color:#9188b0">$${totalInvested.toFixed(2)}</span></span>
+  document.getElementById("tab-overview-content").innerHTML=`
+    <div class="bigbox" style="background:linear-gradient(135deg,#0e1a0e,#0a1a0a);border:2px solid ${pc(dailyPnl)}44;margin-top:14px">
+      <div class="bigbox-label" style="color:${dailyPnl===0?'#4b5563':pc(dailyPnl)}">✓ Today's Realized P&L</div>
+      <div class="bigbox-amount" style="color:${pc(dailyPnl)}">${fm(dailyPnl)}</div>
+      <div class="bigbox-sub" style="color:#4b5563">Closed trades today · Resets midnight UTC</div>
+      <div class="bigbox-meta">
+        <span style="color:#6b7280">Won: <span style="color:#00e676;font-weight:700">${totalWon}</span></span>
+        <span style="color:#6b7280">Lost: <span style="color:#ff5252;font-weight:700">${totalLost}</span></span>
+        <span style="color:#6b7280">WR: <span style="color:${wc(combinedWr)};font-weight:700">${combinedWr.toFixed(1)}%</span></span>
       </div>
     </div>
-
-    <div class="row">
-      <div class="sc" style="border-color:#a78bfa33">
-        <div class="sl" style="color:#a78bfa">Bot A P&L</div>
-        <div class="sv" style="color:${pc(a.total_pnl||0)}">${fm(a.total_pnl||0)}</div>
-        <div class="ss">${(a.win_rate||0).toFixed(0)}% win rate</div>
-      </div>
-      <div class="sc" style="border-color:#00e67633">
-        <div class="sl" style="color:#00e676">Bot B P&L</div>
-        <div class="sv" style="color:${pc(b.total_pnl||0)}">${fm(b.total_pnl||0)}</div>
-        <div class="ss">${(b.win_rate||0).toFixed(0)}% win rate</div>
+    <div class="bigbox" style="background:linear-gradient(135deg,#1a1200,#100e00);border:2px solid #ffb30044">
+      <div class="bigbox-label" style="color:#ffb300">⏳ Outstanding Bets</div>
+      <div class="bigbox-amount" style="color:#ffb300">$${totalInv.toFixed(2)}</div>
+      <div class="bigbox-sub" style="color:#4b5563">${totalOpen} open positions · resolving within 72hrs</div>
+      <div class="bigbox-meta">
+        <span style="color:#6b7280">Bot A: <span style="color:#a78bfa;font-weight:700">$${(a.invested||0).toFixed(2)}</span></span>
+        <span style="color:#6b7280">Bot B: <span style="color:#00e676;font-weight:700">$${(b.invested||0).toFixed(2)}</span></span>
       </div>
     </div>
-
+    <div class="bigbox" style="background:linear-gradient(135deg,#1a0e38,#0e1a38);border:1px solid #2a1f4a">
+      <div class="bigbox-label" style="color:#6b5fa0">📈 All-Time Total P&L</div>
+      <div class="bigbox-amount" style="color:${pc(totalPnl)}">${fm(totalPnl)}</div>
+      <div class="bigbox-sub" style="color:#4b5563">All resolved trades combined</div>
+    </div>
     <div class="div"></div>
     <div class="sec">Bot A — Conservative</div>
-    ${botCard(a, "#a78bfa", "5 min scan")}
-
+    ${botCard(a,"#a78bfa","5 min scan")}
     <div class="sec">Bot B — High Velocity</div>
-    ${botCard(b, "#00e676", "5 sec scan")}
-
+    ${botCard(b,"#00e676","5 sec scan")}
     <div class="note">
-      All trades paper — no real money at risk yet<br>
-      P&L realized when markets resolve (days–weeks)<br>
-      Go-live decision: April 30th
+      ✓ <strong style="color:#00e676">Realized P&L</strong> = actual wins/losses from closed bets<br>
+      ⏳ <strong style="color:#ffb300">Outstanding</strong> = bets placed, waiting to resolve<br>
+      🧠 Bots self-improve every 20 resolved trades<br>
+      📄 All paper — no real money at risk yet
     </div>`;
 
-  document.getElementById("upd").textContent = "Live · " + new Date().toLocaleTimeString();
-}
+  const wonTrades=allTrades.filter(t=>t.status==="won");
+  const lostTrades=allTrades.filter(t=>t.status==="lost");
+  const resolved=[...wonTrades,...lostTrades].sort((x,y)=>(y.placed_at||"").localeCompare(x.placed_at||""));
+  let histHTML="";
+  if(resolved.length===0){
+    histHTML=`<div style="text-align:center;padding:40px;color:#3d3558;font-size:12px">No resolved trades yet<br><span style="font-size:10px;margin-top:8px;display:block">Check back in the morning!</span></div>`;
+  }else{
+    const histPnl=resolved.reduce((s,t)=>s+(t.pnl||0),0);
+    histHTML+=`<div style="background:#0e0c1c;border:1px solid #1a1530;border-radius:12px;padding:14px;margin-bottom:14px;margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:10px;color:#4b5563;letter-spacing:1px;text-transform:uppercase">All Resolved Trades</span>
+        <span style="font-size:18px;font-weight:700;color:${pc(histPnl)}">${fm(histPnl)}</span>
+      </div>
+      <div style="display:flex;gap:16px;font-size:11px">
+        <span style="color:#00e676">✓ Won: ${wonTrades.length}</span>
+        <span style="color:#ff5252">✗ Lost: ${lostTrades.length}</span>
+        <span style="color:#6b7280">Total: ${resolved.length}</span>
+      </div></div>`;
+    resolved.forEach(t=>{histHTML+=histCard(t,`Bot ${t.bot}`,t.botColor);});
+  }
+  document.getElementById("tab-history-content").innerHTML=histHTML;
 
+  const openTrades=allTrades.filter(t=>t.status==="open");
+  let openHTML="";
+  if(openTrades.length===0){
+    openHTML=`<div style="text-align:center;padding:40px;color:#3d3558;font-size:12px">No open bets right now</div>`;
+  }else{
+    openHTML+=`<div style="background:#0e0c1c;border:1px solid #ffb30033;border-radius:12px;padding:14px;margin-bottom:14px;margin-top:14px">
+      <div style="font-size:10px;color:#ffb300;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">⏳ Open Positions</div>
+      <div style="font-size:24px;font-weight:700;color:#ffb300">$${totalInv.toFixed(2)}</div>
+      <div style="font-size:10px;color:#4b5563;margin-top:4px">${openTrades.length} bets waiting to resolve</div></div>`;
+    openTrades.forEach(t=>{openHTML+=histCard(t,`Bot ${t.bot}`,t.botColor);});
+  }
+  document.getElementById("tab-open-content").innerHTML=openHTML;
+  document.getElementById("upd").textContent="Live · "+new Date().toLocaleTimeString();
+}
 load();
-setInterval(load, 30000);
+setInterval(load,30000);
 </script>
 </body>
 </html>
