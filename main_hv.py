@@ -261,10 +261,24 @@ Respond ONLY with valid JSON:
     except Exception as e:
         log.debug(f"AI: {e}"); return None
 
+def kelly_size(analysis, price, max_bet):
+    try:
+        fair = float(analysis.get("fair_value") or price)
+        fair = max(0.05, min(0.95, fair))
+        b = (1 / price) - 1
+        if b <= 0: return round(max_bet * 0.25, 2)
+        full_kelly = (b * fair - (1-fair)) / b
+        half_kelly = full_kelly / 2
+        fraction = max(0.25, min(1.0, half_kelly))
+        return max(round(max_bet * fraction, 2), round(max_bet * 0.25, 2))
+    except:
+        return round(max_bet * 0.5, 2)
+
 async def do_trade(market, analysis, db, trigger="deep_scan"):
     side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
     price = market["yes_price"] if side == "YES" else market["no_price"]
-    size = round(MAX_TRADE * analysis.get("suggested_size_pct",1.0), 2)
+    size = kelly_size(analysis, price, MAX_TRADE)
+    log.info(f"[{BOT_NAME}] Kelly: ${size} (fair:{analysis.get('fair_value','?')} price:{price:.3f})")
     if db.stats()["open_positions"] >= MAX_POSITIONS: return False
     if PAPER_MODE:
         tid = db.record(market, analysis, size, trigger=trigger, paper=True)
