@@ -1,7 +1,6 @@
 """
 PolyAgent Conservative Bot v5
 - Fixed resolution: checks closed/archived markets properly
-- Filters markets by closing time locally (not via API params)
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
 """
@@ -160,9 +159,7 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    # Pull active markets without date filters — filter locally instead
-    now = datetime.now(timezone.utc)
-    cutoff = now + timedelta(hours=MAX_HOURS)
+    # Fetch active markets — no date filtering, let Claude decide
     params = {
         "active": "true",
         "closed": "false",
@@ -186,16 +183,6 @@ async def fetch_markets():
     out = []
     for m in data:
         try:
-            # Filter by end date locally
-            end_date_str = m.get("endDate") or m.get("end_date") or ""
-            if end_date_str:
-                try:
-                    end_dt = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                    if end_dt <= now or end_dt > cutoff:
-                        continue  # Skip already closed or too far out
-                except:
-                    pass  # If we can't parse date, include it
-
             vol = float(m.get("volume") or 0)
             liq = float(m.get("liquidity") or 0)
             if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
@@ -203,6 +190,7 @@ async def fetch_markets():
             try: yp = float(json.loads(m.get("outcomePrices") or "[0.5]")[0])
             except: pass
             if yp < 0.05 or yp > 0.95: continue
+            end_date_str = str(m.get("endDate") or m.get("end_date") or "")
             txt = (m.get("question") or m.get("title") or "").lower()
             cat = "World Events"
             for c, kw in KEYWORDS.items():
@@ -216,7 +204,7 @@ async def fetch_markets():
             })
         except: continue
 
-    log.info(f"[{BOT_NAME}] Found {len(out)} markets closing within {MAX_HOURS}hrs")
+    log.info(f"[{BOT_NAME}] Found {len(out)} tradeable markets")
     return out[:MARKETS_PER_SCAN]
 
 async def analyze(market, stats, strategy_context=""):
@@ -293,7 +281,7 @@ async def do_trade(market, analysis, db):
     if db.stats()["open_positions"] >= MAX_POSITIONS: return False
     if PAPER_MODE:
         tid = db.record(market, analysis, size, paper=True)
-        log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' closes:{market.get('end_date','?')[:16]} @ {price:.3f} ${size}")
+        log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' @ {price:.3f} ${size}")
         return True
     if not POLY_API_KEY: return False
     try:
