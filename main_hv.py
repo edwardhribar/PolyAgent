@@ -245,6 +245,7 @@ Be aggressive. Bias toward trading. Only HOLD if truly 50/50.
 Respond ONLY with valid JSON:
 {{"recommendation":"BUY_YES","confidence":68,"edge":"brief","reasoning":"1-2 sentences.","risk_level":"MEDIUM","fair_value":0.65,"suggested_size_pct":0.75}}"""
 
+    raw_text = ""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(ANT_API,
@@ -252,14 +253,20 @@ Respond ONLY with valid JSON:
                 json={"model":MODEL,"max_tokens":300,"messages":[{"role":"user","content":prompt}]},
                 timeout=aiohttp.ClientTimeout(total=20)) as r:
                 if r.status != 200:
-                    log.warning(f"Anthropic {r.status}"); return None
+                    body = await r.text()
+                    log.error(f"AI HTTP {r.status}: {body[:300]}")
+                    return None
                 d = await r.json()
-        txt = "".join(b.get("text","") for b in d.get("content",[]))
-        res = json.loads(txt.replace("```json","").replace("```","").strip())
-        assert res.get("recommendation") in ("BUY_YES","BUY_NO","HOLD")
-        res["category"] = market.get("category"); return res
+        raw_text = "".join(b.get("text","") for b in d.get("content",[]))
+        res = json.loads(raw_text.replace("```json","").replace("```","").strip())
+        if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
+            log.error(f"AI bad recommendation: {res.get('recommendation')} | raw: {raw_text[:200]}")
+            return None
+        res["category"] = market.get("category")
+        return res
     except Exception as e:
-        log.debug(f"AI: {e}"); return None
+        log.error(f"AI error: {type(e).__name__}: {e} | raw: {raw_text[:200]}", exc_info=True)
+        return None
 
 def kelly_size(analysis, price, max_bet):
     try:
