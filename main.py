@@ -228,7 +228,8 @@ Category: {market['category']}
 Performance: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
 {strategy_section}
 
-Analyze carefully. Look for clear edges.
+Analyze carefully. Look for clear edges. Use HOLD if unsure.
+recommendation must be BUY_YES, BUY_NO, or HOLD only.
 Respond ONLY with valid JSON:
 {{"recommendation":"BUY_YES","confidence":78,"edge":"brief reason","reasoning":"2 sentences.","risk_level":"MEDIUM","fair_value":0.72,"suggested_size_pct":0.5}}"""
 
@@ -246,6 +247,9 @@ Respond ONLY with valid JSON:
                 d = await r.json()
         raw_text = "".join(b.get("text","") for b in d.get("content",[]))
         res = json.loads(raw_text.replace("```json","").replace("```","").strip())
+        # Normalise any unexpected no-trade signals to HOLD
+        if res.get("recommendation") in ("SKIP","PASS","NO_TRADE"):
+            res["recommendation"] = "HOLD"
         if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
             log.error(f"AI bad recommendation: {res.get('recommendation')} | raw: {raw_text[:200]}")
             return None
@@ -256,26 +260,16 @@ Respond ONLY with valid JSON:
         return None
 
 def kelly_size(analysis, price, max_bet):
-    """
-    Kelly Criterion: f* = (bp - q) / b
-    b = odds received (1/price - 1)
-    p = our estimated probability (fair_value)
-    q = 1 - p
-    Capped at MAX_TRADE, floored at 25% of MAX_TRADE.
-    Half-Kelly used for safety (f* / 2).
-    """
     try:
         fair = float(analysis.get("fair_value") or price)
         fair = max(0.05, min(0.95, fair))
-        p = fair
-        q = 1 - p
-        b = (1 / price) - 1  # decimal odds
+        p = fair; q = 1 - p
+        b = (1 / price) - 1
         if b <= 0: return round(max_bet * 0.25, 2)
         full_kelly = (b * p - q) / b
-        half_kelly = full_kelly / 2  # half-Kelly for safety
+        half_kelly = full_kelly / 2
         fraction = max(0.25, min(1.0, half_kelly))
-        size = round(max_bet * fraction, 2)
-        return max(size, round(max_bet * 0.25, 2))
+        return max(round(max_bet * fraction, 2), round(max_bet * 0.25, 2))
     except:
         return round(max_bet * 0.5, 2)
 
@@ -304,71 +298,42 @@ async def do_trade(market, analysis, db):
         log.error(f"Trade: {e}"); return False
 
 async def check_market_resolved(mid, session):
-    """Try multiple methods to check if a market resolved."""
-    # Method 1: Direct lookup (works for active/recent markets)
     try:
         async with session.get(f"{GAMMA_API}/markets/{mid}",
             timeout=aiohttp.ClientTimeout(total=8)) as r:
             if r.status == 200:
                 market = await r.json()
-                is_resolved = (
-                    market.get("resolved") == True or
-                    market.get("closed") == True or
-                    bool(market.get("winningOutcome")) or
-                    bool(market.get("resolutionTime"))
-                )
-                if is_resolved:
+                if (market.get("resolved") or market.get("closed") or
+                        bool(market.get("winningOutcome")) or bool(market.get("resolutionTime"))):
                     return market
     except: pass
-
-    # Method 2: Search closed markets (for archived short-term markets)
-    try:
-        async with session.get(f"{GAMMA_API}/markets",
-            params={"id": mid, "closed": "true"},
-            timeout=aiohttp.ClientTimeout(total=8)) as r:
-            if r.status == 200:
-                data = await r.json()
-                if data and len(data) > 0:
-                    return data[0]
-    except: pass
-
-    # Method 3: Search archived markets
-    try:
-        async with session.get(f"{GAMMA_API}/markets",
-            params={"id": mid, "archived": "true"},
-            timeout=aiohttp.ClientTimeout(total=8)) as r:
-            if r.status == 200:
-                data = await r.json()
-                if data and len(data) > 0:
-                    return data[0]
-    except: pass
-
+    for param in [{"id": mid, "closed": "true"}, {"id": mid, "archived": "true"}]:
+        try:
+            async with session.get(f"{GAMMA_API}/markets", params=param,
+                timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    if data: return data[0]
+        except: pass
     return None
 
 async def resolve_settled(db):
     open_trades = db.open_trades()
     if not open_trades: return []
     settled = []
-
     async with aiohttp.ClientSession() as session:
         for trade in open_trades:
             mid = trade["market_id"]
             try:
-                # Skip if market hasn't closed yet based on end_date
                 end_date = trade.get("end_date","")
                 if end_date:
                     try:
                         end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                        if datetime.now(timezone.utc) < end_dt:
-                            continue  # Not closed yet, skip
+                        if datetime.now(timezone.utc) < end_dt: continue
                     except: pass
-
                 market = await check_market_resolved(mid, session)
                 if not market: continue
-
                 winning = (market.get("winningOutcome") or "").upper().strip()
-
-                # Fallback: use outcome prices (winner is close to 1.0)
                 if not winning:
                     try:
                         prices = json.loads(market.get("outcomePrices") or "[]")
@@ -376,22 +341,16 @@ async def resolve_settled(db):
                         if prices:
                             float_prices = [float(p) for p in prices]
                             max_val = max(float_prices)
-                            if max_val > 0.95:  # Clear winner
+                            if max_val > 0.95:
                                 max_idx = float_prices.index(max_val)
                                 winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
                     except: pass
-
-                if not winning:
-                    log.debug(f"No winner found for {mid}")
-                    continue
-
-                # Map winning outcome to YES/NO
+                if not winning: continue
                 outcomes = market.get("outcomes") or ["YES","NO"]
                 winning_idx = None
                 for i, o in enumerate(outcomes):
                     if str(o).upper().strip() == winning:
-                        winning_idx = i
-                        break
+                        winning_idx = i; break
                 our_side = trade["side"].upper()
                 if winning_idx is not None:
                     won = (our_side == "YES" and winning_idx == 0) or (our_side == "NO" and winning_idx == 1)
@@ -402,10 +361,8 @@ async def resolve_settled(db):
                 pnl = db.resolve(trade["id"], won, payout)
                 settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
                 log.info(f"[{BOT_NAME}] ✓ Resolved '{trade['question'][:50]}' → {'WIN' if won else 'LOSS'} ${pnl:.2f}")
-
             except Exception as e:
                 log.debug(f"Resolution check failed {mid}: {e}")
-
     return settled
 
 async def improve_strategy(db, current_strategy, version):
@@ -471,25 +428,18 @@ async def main():
         try:
             cycle += 1
             log.info(f"\n── Cycle #{cycle} ──")
-
-            # Resolve settled trades
             settled = await resolve_settled(db)
             if settled:
                 log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
                 for t in settled:
                     log.info(f"  {'✓ WON' if t['won'] else '✗ LOST'} ${t.get('pnl',0):.2f} — {t['question'][:50]}")
-
-            # Check strategy improvement
             s = db.stats()
             resolved_total = s["won"] + s["lost"]
             if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
                 log.info(f"[{BOT_NAME}] Running strategy review...")
                 strategy_context, strategy_version = await improve_strategy(db, strategy_context, strategy_version)
                 resolved_at_last_review = resolved_total
-
             log.info(f"[{BOT_NAME}] Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f} | WR:{s['win_rate']:.1f}% | Open:{s['open_positions']}")
-
-            # Fetch and analyze markets
             mkts = await fetch_markets()
             traded = 0
             for m in mkts:
@@ -499,13 +449,11 @@ async def main():
                 a = await analyze(m, s, strategy_context)
                 if not a: continue
                 log.info(f"  '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[11:16]}")
-                if a["confidence"] >= BASE_CONFIDENCE and a["recommendation"] != "HOLD":
+                if a["confidence"] >= BASE_CONFIDENCE and a["recommendation"] not in ("HOLD","SKIP"):
                     if await do_trade(m, a, db): traded += 1
                 await asyncio.sleep(1)
-
             s = db.stats()
             log.info(f"Cycle #{cycle} done — {traded} new | Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f}")
-
         except Exception as e:
             log.error(f"Cycle error: {e}", exc_info=True)
         await asyncio.sleep(SCAN_INTERVAL)
