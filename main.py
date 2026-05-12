@@ -232,6 +232,7 @@ Analyze carefully. Look for clear edges.
 Respond ONLY with valid JSON:
 {{"recommendation":"BUY_YES","confidence":78,"edge":"brief reason","reasoning":"2 sentences.","risk_level":"MEDIUM","fair_value":0.72,"suggested_size_pct":0.5}}"""
 
+    raw_text = ""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(ANT_API,
@@ -239,14 +240,20 @@ Respond ONLY with valid JSON:
                 json={"model":MODEL,"max_tokens":400,"messages":[{"role":"user","content":prompt}]},
                 timeout=aiohttp.ClientTimeout(total=30)) as r:
                 if r.status != 200:
-                    log.warning(f"Anthropic {r.status}"); return None
+                    body = await r.text()
+                    log.error(f"AI HTTP {r.status}: {body[:300]}")
+                    return None
                 d = await r.json()
-        txt = "".join(b.get("text","") for b in d.get("content",[]))
-        res = json.loads(txt.replace("```json","").replace("```","").strip())
-        assert res.get("recommendation") in ("BUY_YES","BUY_NO","HOLD")
-        res["category"] = market.get("category"); return res
+        raw_text = "".join(b.get("text","") for b in d.get("content",[]))
+        res = json.loads(raw_text.replace("```json","").replace("```","").strip())
+        if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
+            log.error(f"AI bad recommendation: {res.get('recommendation')} | raw: {raw_text[:200]}")
+            return None
+        res["category"] = market.get("category")
+        return res
     except Exception as e:
-        log.error(f"AI: {e}"); return None
+        log.error(f"AI error: {type(e).__name__}: {e} | raw: {raw_text[:200]}", exc_info=True)
+        return None
 
 def kelly_size(analysis, price, max_bet):
     """
@@ -379,7 +386,6 @@ async def resolve_settled(db):
                     continue
 
                 # Map winning outcome to YES/NO
-                # Polymarket uses Over/Under, 1/2, etc. not always YES/NO
                 outcomes = market.get("outcomes") or ["YES","NO"]
                 winning_idx = None
                 for i, o in enumerate(outcomes):
