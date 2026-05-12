@@ -1,7 +1,7 @@
 """
 PolyAgent Conservative Bot v5
 - Fixed resolution: checks closed/archived markets properly
-- Uses Polymarket API date filtering
+- Filters markets by closing time locally (not via API params)
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
 """
@@ -160,29 +160,42 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
+    # Pull active markets without date filters — filter locally instead
     now = datetime.now(timezone.utc)
-    end = now + timedelta(hours=MAX_HOURS)
+    cutoff = now + timedelta(hours=MAX_HOURS)
     params = {
         "active": "true",
         "closed": "false",
         "limit": 100,
         "order": "endDate",
         "ascending": "true",
-        "end_date_min": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "end_date_max": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(f"{GAMMA_API}/markets", params=params,
                 timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status != 200: return []
+                if r.status != 200:
+                    log.error(f"Fetch HTTP {r.status}")
+                    return []
                 data = await r.json()
     except Exception as e:
         log.error(f"Fetch: {e}"); return []
 
+    log.info(f"[{BOT_NAME}] Raw markets from API: {len(data)}")
+
     out = []
     for m in data:
         try:
+            # Filter by end date locally
+            end_date_str = m.get("endDate") or m.get("end_date") or ""
+            if end_date_str:
+                try:
+                    end_dt = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                    if end_dt <= now or end_dt > cutoff:
+                        continue  # Skip already closed or too far out
+                except:
+                    pass  # If we can't parse date, include it
+
             vol = float(m.get("volume") or 0)
             liq = float(m.get("liquidity") or 0)
             if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
@@ -199,7 +212,7 @@ async def fetch_markets():
                 "question": m.get("question") or m.get("title") or "Unknown",
                 "yes_price": yp, "no_price": 1-yp,
                 "volume": vol, "liquidity": liq,
-                "end_date": m.get("endDate",""), "category": cat,
+                "end_date": end_date_str, "category": cat,
             })
         except: continue
 
@@ -247,7 +260,6 @@ Respond ONLY with valid JSON:
                 d = await r.json()
         raw_text = "".join(b.get("text","") for b in d.get("content",[]))
         res = json.loads(raw_text.replace("```json","").replace("```","").strip())
-        # Normalise any unexpected no-trade signals to HOLD
         if res.get("recommendation") in ("SKIP","PASS","NO_TRADE"):
             res["recommendation"] = "HOLD"
         if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
@@ -293,6 +305,7 @@ async def do_trade(market, analysis, db):
                 d = await r.json()
                 if r.status == 200 and d.get("orderId"):
                     db.record(market,analysis,size,paper=False,order_id=d["orderId"]); return True
+                log.error(f"Order failed {r.status}: {d}")
                 return False
     except Exception as e:
         log.error(f"Trade: {e}"); return False
