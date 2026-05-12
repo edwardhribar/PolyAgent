@@ -2,7 +2,6 @@
 PolyAgent HV Bot v5
 - Fixed resolution: checks closed/archived markets properly
 - Handles 5-minute crypto markets and other short-term markets
-- Filters markets by closing time locally (not via API params)
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
 """
@@ -49,22 +48,6 @@ KEYWORDS = {
     "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
-
-def parse_end_date(val):
-    """Parse endDate from Polymarket — handles ISO strings and Unix timestamps."""
-    if not val:
-        return None
-    try:
-        # Unix timestamp (int or float)
-        return datetime.fromtimestamp(float(val), tz=timezone.utc)
-    except (TypeError, ValueError):
-        pass
-    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(str(val), fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None
 
 class DB:
     def __init__(self, path="data/hv.db"):
@@ -191,8 +174,7 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    now = datetime.now(timezone.utc)
-    cutoff = now + timedelta(hours=MAX_HOURS)
+    # Fetch active markets — no date filtering, let Claude decide based on hours_left
     params = {
         "active": "true",
         "closed": "false",
@@ -216,17 +198,6 @@ async def fetch_markets():
     out = []
     for m in data:
         try:
-            raw_end = m.get("endDate") or m.get("end_date")
-            end_dt = parse_end_date(raw_end)
-
-            # Normalise to ISO string for storage
-            end_date_str = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if end_dt else ""
-
-            # Filter: must close in future and within MAX_HOURS
-            if end_dt:
-                if end_dt <= now or end_dt > cutoff:
-                    continue
-
             vol = float(m.get("volume") or 0)
             liq = float(m.get("liquidity") or 0)
             if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
@@ -234,6 +205,7 @@ async def fetch_markets():
             try: yp = float(json.loads(m.get("outcomePrices") or "[0.5]")[0])
             except: pass
             if yp < 0.04 or yp > 0.96: continue
+            end_date_str = str(m.get("endDate") or m.get("end_date") or "")
             txt = (m.get("question") or m.get("title") or "").lower()
             cat = "World Events"
             for c, kw in KEYWORDS.items():
@@ -247,7 +219,7 @@ async def fetch_markets():
             })
         except: continue
 
-    log.info(f"[{BOT_NAME}] Found {len(out)} markets closing within {MAX_HOURS}hrs")
+    log.info(f"[{BOT_NAME}] Found {len(out)} tradeable markets")
     return out[:MARKETS_PER_SCAN]
 
 async def analyze(market, stats, strategy_context="", trigger="deep_scan"):
@@ -322,7 +294,7 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
     if db.stats()["open_positions"] >= MAX_POSITIONS: return False
     if PAPER_MODE:
         tid = db.record(market, analysis, size, trigger=trigger, paper=True)
-        log.info(f"[{BOT_NAME}] PAPER #{tid} [{trigger}]: {side} '{market['question'][:45]}' closes:{market.get('end_date','?')[11:16]} @ {price:.3f} ${size}")
+        log.info(f"[{BOT_NAME}] PAPER #{tid} [{trigger}]: {side} '{market['question'][:45]}' @ {price:.3f} ${size}")
         return True
     if not POLY_API_KEY: return False
     try:
@@ -470,7 +442,7 @@ async def main():
     price_cache = {}; ai_pm = 0; ai_win = asyncio.get_event_loop().time()
     deep_due = 0; resolve_due = 0
     markets = await fetch_markets()
-    log.info(f"[{BOT_NAME}] Loaded {len(markets)} markets within {MAX_HOURS}hrs")
+    log.info(f"[{BOT_NAME}] Loaded {len(markets)} markets")
 
     while True:
         now = asyncio.get_event_loop().time()
