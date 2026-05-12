@@ -50,6 +50,22 @@ KEYWORDS = {
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
 
+def parse_end_date(val):
+    """Parse endDate from Polymarket — handles ISO strings and Unix timestamps."""
+    if not val:
+        return None
+    try:
+        # Unix timestamp (int or float)
+        return datetime.fromtimestamp(float(val), tz=timezone.utc)
+    except (TypeError, ValueError):
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(str(val), fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
 class DB:
     def __init__(self, path="data/hv.db"):
         self.path = path
@@ -175,7 +191,6 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    # Pull active markets without date filters — filter locally instead
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=MAX_HOURS)
     params = {
@@ -201,14 +216,17 @@ async def fetch_markets():
     out = []
     for m in data:
         try:
-            end_date_str = m.get("endDate") or m.get("end_date") or ""
-            if end_date_str:
-                try:
-                    end_dt = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                    if end_dt <= now or end_dt > cutoff:
-                        continue
-                except:
-                    pass
+            raw_end = m.get("endDate") or m.get("end_date")
+            end_dt = parse_end_date(raw_end)
+
+            # Normalise to ISO string for storage
+            end_date_str = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if end_dt else ""
+
+            # Filter: must close in future and within MAX_HOURS
+            if end_dt:
+                if end_dt <= now or end_dt > cutoff:
+                    continue
+
             vol = float(m.get("volume") or 0)
             liq = float(m.get("liquidity") or 0)
             if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
