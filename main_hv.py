@@ -241,7 +241,8 @@ Volume: ${market['volume']:,.0f} | Category: {market['category']}
 Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
 {strategy_section}
 
-Be aggressive. Bias toward trading. Only HOLD if truly 50/50.
+Be aggressive. Bias toward trading. Use HOLD if truly 50/50.
+recommendation must be BUY_YES, BUY_NO, or HOLD only.
 Respond ONLY with valid JSON:
 {{"recommendation":"BUY_YES","confidence":68,"edge":"brief","reasoning":"1-2 sentences.","risk_level":"MEDIUM","fair_value":0.65,"suggested_size_pct":0.75}}"""
 
@@ -259,6 +260,9 @@ Respond ONLY with valid JSON:
                 d = await r.json()
         raw_text = "".join(b.get("text","") for b in d.get("content",[]))
         res = json.loads(raw_text.replace("```json","").replace("```","").strip())
+        # Normalise any unexpected no-trade signals to HOLD
+        if res.get("recommendation") in ("SKIP","PASS","NO_TRADE"):
+            res["recommendation"] = "HOLD"
         if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
             log.error(f"AI bad recommendation: {res.get('recommendation')} | raw: {raw_text[:200]}")
             return None
@@ -305,70 +309,42 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
     except: return False
 
 async def check_market_resolved(mid, session):
-    """Try multiple methods to check if a market resolved."""
-    # Method 1: Direct lookup
     try:
         async with session.get(f"{GAMMA_API}/markets/{mid}",
             timeout=aiohttp.ClientTimeout(total=8)) as r:
             if r.status == 200:
                 market = await r.json()
-                is_resolved = (
-                    market.get("resolved") == True or
-                    market.get("closed") == True or
-                    bool(market.get("winningOutcome")) or
-                    bool(market.get("resolutionTime"))
-                )
-                if is_resolved:
+                if (market.get("resolved") or market.get("closed") or
+                        bool(market.get("winningOutcome")) or bool(market.get("resolutionTime"))):
                     return market
     except: pass
-
-    # Method 2: Search closed markets
-    try:
-        async with session.get(f"{GAMMA_API}/markets",
-            params={"id": mid, "closed": "true"},
-            timeout=aiohttp.ClientTimeout(total=8)) as r:
-            if r.status == 200:
-                data = await r.json()
-                if data and len(data) > 0:
-                    return data[0]
-    except: pass
-
-    # Method 3: Search archived markets
-    try:
-        async with session.get(f"{GAMMA_API}/markets",
-            params={"id": mid, "archived": "true"},
-            timeout=aiohttp.ClientTimeout(total=8)) as r:
-            if r.status == 200:
-                data = await r.json()
-                if data and len(data) > 0:
-                    return data[0]
-    except: pass
-
+    for param in [{"id": mid, "closed": "true"}, {"id": mid, "archived": "true"}]:
+        try:
+            async with session.get(f"{GAMMA_API}/markets", params=param,
+                timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    if data: return data[0]
+        except: pass
     return None
 
 async def resolve_settled(db):
     open_trades = db.open_trades()
     if not open_trades: return []
     settled = []
-
     async with aiohttp.ClientSession() as session:
         for trade in open_trades:
             mid = trade["market_id"]
             try:
-                # Skip if market hasn't closed yet
                 end_date = trade.get("end_date","")
                 if end_date:
                     try:
                         end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                        if datetime.now(timezone.utc) < end_dt:
-                            continue
+                        if datetime.now(timezone.utc) < end_dt: continue
                     except: pass
-
                 market = await check_market_resolved(mid, session)
                 if not market: continue
-
                 winning = (market.get("winningOutcome") or "").upper().strip()
-
                 if not winning:
                     try:
                         prices = json.loads(market.get("outcomePrices") or "[]")
@@ -380,15 +356,12 @@ async def resolve_settled(db):
                                 max_idx = float_prices.index(max_val)
                                 winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
                     except: pass
-
                 if not winning: continue
-
                 outcomes = market.get("outcomes") or ["YES","NO"]
                 winning_idx = None
                 for i, o in enumerate(outcomes):
                     if str(o).upper().strip() == winning:
-                        winning_idx = i
-                        break
+                        winning_idx = i; break
                 our_side = trade["side"].upper()
                 if winning_idx is not None:
                     won = (our_side == "YES" and winning_idx == 0) or (our_side == "NO" and winning_idx == 1)
@@ -399,10 +372,8 @@ async def resolve_settled(db):
                 pnl = db.resolve(trade["id"], won, payout)
                 settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
                 log.info(f"[{BOT_NAME}] ✓ {'WIN' if won else 'LOSS'} ${pnl:.2f} — {trade['question'][:50]}")
-
             except Exception as e:
                 log.debug(f"Resolution check failed {mid}: {e}")
-
     return settled
 
 async def improve_strategy(db, current_strategy, version):
@@ -491,7 +462,7 @@ async def main():
             if db.has_open(m["id"]) or ai_pm >= MAX_AI_PER_MIN: continue
             s = db.stats(); a = await analyze(m, s, strategy_context, "price_spike"); ai_pm += 1
             if not a: continue
-            if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] != "HOLD":
+            if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] not in ("HOLD","SKIP"):
                 await do_trade(m, a, db, "price_spike")
 
         # Tier 2: deep scan
@@ -499,12 +470,10 @@ async def main():
             deep_due = now + DEEP_SCAN_SECS
             markets = await fetch_markets(); traded = 0
 
-            # Resolve settled trades
             settled = await resolve_settled(db)
             if settled:
                 log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
 
-            # Strategy improvement check
             s = db.stats()
             resolved_total = s["won"] + s["lost"]
             if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
@@ -521,7 +490,7 @@ async def main():
                 a = await analyze(m, s, strategy_context, "deep_scan"); ai_pm += 1
                 if not a: continue
                 log.info(f"[{BOT_NAME}] '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[11:16]}")
-                if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] != "HOLD":
+                if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] not in ("HOLD","SKIP"):
                     if await do_trade(m, a, db, "deep_scan"): traded += 1
                 await asyncio.sleep(0.3)
 
