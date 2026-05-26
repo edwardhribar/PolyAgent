@@ -1,5 +1,6 @@
 """
 PolyAgent Conservative Bot v5
+- Proper Polymarket L2 auth via py-clob-client
 - Fixed resolution: checks closed/archived markets properly
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
@@ -18,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("polyagent")
 
 WALLET          = os.getenv("WALLET_ADDRESS", "0xd45996A1d51A0C478cb499b1bc24386734000C9f")
-POLY_API_KEY    = os.getenv("POLYMARKET_API_KEY", "")
+POLY_PRIVATE_KEY= os.getenv("POLYMARKET_API_KEY", "")
 ANTHROPIC_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 PAPER_MODE      = os.getenv("PAPER_MODE", "true").lower() == "true"
 MAX_TRADE       = float(os.getenv("MAX_TRADE_SIZE", "10"))
@@ -44,6 +45,23 @@ KEYWORDS = {
     "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
+
+# Initialize Polymarket CLOB client
+clob_client = None
+def get_clob_client():
+    global clob_client
+    if clob_client is None and POLY_PRIVATE_KEY:
+        try:
+            from py_clob_client.client import ClobClient
+            clob_client = ClobClient(
+                host=CLOB_API,
+                key=POLY_PRIVATE_KEY,
+                chain_id=137,
+            )
+            log.info(f"[{BOT_NAME}] CLOB client initialized")
+        except Exception as e:
+            log.error(f"CLOB client init failed: {e}")
+    return clob_client
 
 class DB:
     def __init__(self, path="data/polyagent.db"):
@@ -159,7 +177,6 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    # Fetch active markets — no date filtering, let Claude decide
     params = {
         "active": "true",
         "closed": "false",
@@ -195,12 +212,19 @@ async def fetch_markets():
             cat = "World Events"
             for c, kw in KEYWORDS.items():
                 if any(k in txt for k in kw): cat = c; break
+            # Grab YES/NO token IDs for order placement
+            token_ids = []
+            try:
+                raw = m.get("clobTokenIds") or "[]"
+                token_ids = json.loads(raw) if isinstance(raw, str) else raw
+            except: pass
             out.append({
                 "id": m.get("id") or m.get("conditionId"),
                 "question": m.get("question") or m.get("title") or "Unknown",
                 "yes_price": yp, "no_price": 1-yp,
                 "volume": vol, "liquidity": liq,
                 "end_date": end_date_str, "category": cat,
+                "token_ids": token_ids,
             })
         except: continue
 
@@ -283,20 +307,43 @@ async def do_trade(market, analysis, db):
         tid = db.record(market, analysis, size, paper=True)
         log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' @ {price:.3f} ${size}")
         return True
-    if not POLY_API_KEY: return False
+    if not POLY_PRIVATE_KEY:
+        log.error("POLYMARKET_API_KEY not set")
+        return False
+
+    # Get token ID for the side we're buying
+    token_ids = market.get("token_ids", [])
+    if len(token_ids) < 2:
+        log.error(f"No token IDs for market {market['id']}")
+        return False
+    token_id = token_ids[0] if side == "YES" else token_ids[1]
+
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"{CLOB_API}/order",
-                headers={"Content-Type":"application/json","POLY_ADDRESS":WALLET,"POLY_API_KEY":POLY_API_KEY},
-                json={"market":market["id"],"side":"BUY","outcome":side,"price":round(price,4),"size":size,"orderType":"GTC"},
-                timeout=aiohttp.ClientTimeout(total=15)) as r:
-                d = await r.json()
-                if r.status == 200 and d.get("orderId"):
-                    db.record(market,analysis,size,paper=False,order_id=d["orderId"]); return True
-                log.error(f"Order failed {r.status}: {d}")
-                return False
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY
+        client = get_clob_client()
+        if not client:
+            log.error("CLOB client unavailable")
+            return False
+
+        order_args = OrderArgs(
+            token_id=str(token_id),
+            price=round(price, 4),
+            size=size,
+            side=BUY,
+        )
+        signed_order = client.create_order(order_args)
+        resp = client.post_order(signed_order, OrderType.GTC)
+        if resp and resp.get("orderID"):
+            db.record(market, analysis, size, paper=False, order_id=resp["orderID"])
+            log.info(f"[{BOT_NAME}] ✅ ORDER PLACED: {side} '{market['question'][:50]}' @ {price:.3f} ${size} | ID:{resp['orderID']}")
+            return True
+        else:
+            log.error(f"Order rejected: {resp}")
+            return False
     except Exception as e:
-        log.error(f"Trade: {e}"); return False
+        log.error(f"Trade error: {type(e).__name__}: {e}", exc_info=True)
+        return False
 
 async def check_market_resolved(mid, session):
     try:
@@ -418,6 +465,10 @@ async def main():
     threading.Thread(target=api_thread, daemon=True).start()
     log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
     log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{BASE_CONFIDENCE}%")
+
+    # Pre-init CLOB client
+    if not PAPER_MODE:
+        get_clob_client()
 
     saved = db.get_latest_strategy()
     strategy_context = saved["strategy"] if saved else ""
