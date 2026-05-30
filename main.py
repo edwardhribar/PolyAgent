@@ -33,7 +33,7 @@ MAX_HOURS       = int(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
 IMPROVE_EVERY   = int(os.getenv("IMPROVE_EVERY", "20"))
 API_PORT        = int(os.getenv("PORT", "8080"))
 BOT_NAME        = "Conservative"
-MODEL           = "claude-sonnet-4-6"
+MODEL           = "claude-haiku-4-5-20251001"
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
@@ -46,7 +46,6 @@ KEYWORDS = {
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
 
-# Initialize Polymarket CLOB client
 clob_client = None
 def get_clob_client():
     global clob_client
@@ -212,7 +211,6 @@ async def fetch_markets():
             cat = "World Events"
             for c, kw in KEYWORDS.items():
                 if any(k in txt for k in kw): cat = c; break
-            # Grab YES/NO token IDs for order placement
             token_ids = []
             try:
                 raw = m.get("clobTokenIds") or "[]"
@@ -310,14 +308,11 @@ async def do_trade(market, analysis, db):
     if not POLY_PRIVATE_KEY:
         log.error("POLYMARKET_API_KEY not set")
         return False
-
-    # Get token ID for the side we're buying
     token_ids = market.get("token_ids", [])
     if len(token_ids) < 2:
         log.error(f"No token IDs for market {market['id']}")
         return False
     token_id = token_ids[0] if side == "YES" else token_ids[1]
-
     try:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import BUY
@@ -325,7 +320,6 @@ async def do_trade(market, analysis, db):
         if not client:
             log.error("CLOB client unavailable")
             return False
-
         order_args = OrderArgs(
             token_id=str(token_id),
             price=round(price, 4),
@@ -465,16 +459,12 @@ async def main():
     threading.Thread(target=api_thread, daemon=True).start()
     log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
     log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{BASE_CONFIDENCE}%")
-
-    # Pre-init CLOB client
     if not PAPER_MODE:
         get_clob_client()
-
     saved = db.get_latest_strategy()
     strategy_context = saved["strategy"] if saved else ""
     strategy_version = saved["version"] if saved else 0
     resolved_at_last_review = db.stats()["won"] + db.stats()["lost"]
-
     cycle = 0
     while True:
         try:
