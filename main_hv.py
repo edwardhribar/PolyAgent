@@ -1,7 +1,7 @@
 """
 PolyAgent HV Bot v5
+- Proper Polymarket L2 auth via py-clob-client
 - Fixed resolution: checks closed/archived markets properly
-- Handles 5-minute crypto markets and other short-term markets
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
 """
@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("polyagent.hv")
 
 WALLET          = os.getenv("WALLET_ADDRESS", "0xd45996A1d51A0C478cb499b1bc24386734000C9f")
-POLY_API_KEY    = os.getenv("POLYMARKET_API_KEY", "")
+POLY_PRIVATE_KEY= os.getenv("POLYMARKET_API_KEY", "")
 ANTHROPIC_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 PAPER_MODE      = os.getenv("PAPER_MODE", "true").lower() == "true"
 MAX_TRADE       = float(os.getenv("MAX_TRADE_SIZE", "10"))
@@ -36,7 +36,7 @@ MAX_HOURS       = int(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
 IMPROVE_EVERY   = int(os.getenv("IMPROVE_EVERY", "20"))
 API_PORT        = int(os.getenv("PORT", "8080"))
 BOT_NAME        = "HV"
-MODEL           = "claude-sonnet-4-6"
+MODEL           = "claude-haiku-4-5-20251001"
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
@@ -48,6 +48,22 @@ KEYWORDS = {
     "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
     "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
+
+clob_client = None
+def get_clob_client():
+    global clob_client
+    if clob_client is None and POLY_PRIVATE_KEY:
+        try:
+            from py_clob_client.client import ClobClient
+            clob_client = ClobClient(
+                host=CLOB_API,
+                key=POLY_PRIVATE_KEY,
+                chain_id=137,
+            )
+            log.info(f"[{BOT_NAME}] CLOB client initialized")
+        except Exception as e:
+            log.error(f"CLOB client init failed: {e}")
+    return clob_client
 
 class DB:
     def __init__(self, path="data/hv.db"):
@@ -174,7 +190,6 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    # Fetch active markets — no date filtering, let Claude decide based on hours_left
     params = {
         "active": "true",
         "closed": "false",
@@ -210,12 +225,18 @@ async def fetch_markets():
             cat = "World Events"
             for c, kw in KEYWORDS.items():
                 if any(k in txt for k in kw): cat = c; break
+            token_ids = []
+            try:
+                raw = m.get("clobTokenIds") or "[]"
+                token_ids = json.loads(raw) if isinstance(raw, str) else raw
+            except: pass
             out.append({
                 "id": m.get("id") or m.get("conditionId"),
                 "question": m.get("question") or m.get("title") or "Unknown",
                 "yes_price": yp, "no_price": 1-yp,
                 "volume": vol, "liquidity": liq,
                 "end_date": end_date_str, "category": cat,
+                "token_ids": token_ids,
             })
         except: continue
 
@@ -296,20 +317,39 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
         tid = db.record(market, analysis, size, trigger=trigger, paper=True)
         log.info(f"[{BOT_NAME}] PAPER #{tid} [{trigger}]: {side} '{market['question'][:45]}' @ {price:.3f} ${size}")
         return True
-    if not POLY_API_KEY: return False
+    if not POLY_PRIVATE_KEY:
+        log.error("POLYMARKET_API_KEY not set")
+        return False
+    token_ids = market.get("token_ids", [])
+    if len(token_ids) < 2:
+        log.error(f"No token IDs for market {market['id']}")
+        return False
+    token_id = token_ids[0] if side == "YES" else token_ids[1]
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"{CLOB_API}/order",
-                headers={"Content-Type":"application/json","POLY_ADDRESS":WALLET,"POLY_API_KEY":POLY_API_KEY},
-                json={"market":market["id"],"side":"BUY","outcome":side,"price":round(price,4),"size":size,"orderType":"GTC"},
-                timeout=aiohttp.ClientTimeout(total=10)) as r:
-                d = await r.json()
-                if r.status==200 and d.get("orderId"):
-                    db.record(market,analysis,size,trigger=trigger,paper=False,order_id=d["orderId"]); return True
-                log.error(f"Order failed {r.status}: {d}")
-                return False
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY
+        client = get_clob_client()
+        if not client:
+            log.error("CLOB client unavailable")
+            return False
+        order_args = OrderArgs(
+            token_id=str(token_id),
+            price=round(price, 4),
+            size=size,
+            side=BUY,
+        )
+        signed_order = client.create_order(order_args)
+        resp = client.post_order(signed_order, OrderType.GTC)
+        if resp and resp.get("orderID"):
+            db.record(market, analysis, size, trigger=trigger, paper=False, order_id=resp["orderID"])
+            log.info(f"[{BOT_NAME}] ✅ ORDER PLACED: {side} '{market['question'][:45]}' @ {price:.3f} ${size} | ID:{resp['orderID']}")
+            return True
+        else:
+            log.error(f"Order rejected: {resp}")
+            return False
     except Exception as e:
-        log.error(f"Trade error: {e}"); return False
+        log.error(f"Trade error: {type(e).__name__}: {e}", exc_info=True)
+        return False
 
 async def check_market_resolved(mid, session):
     try:
@@ -433,14 +473,14 @@ async def main():
     threading.Thread(target=api_thread, daemon=True).start()
     log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
     log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{CONFIDENCE_MIN}%+")
-
+    if not PAPER_MODE:
+        get_clob_client()
     saved = db.get_latest_strategy()
     strategy_context = saved["strategy"] if saved else ""
     strategy_version = saved["version"] if saved else 0
     resolved_at_last_review = db.stats()["won"] + db.stats()["lost"]
-
     price_cache = {}; ai_pm = 0; ai_win = asyncio.get_event_loop().time()
-    deep_due = 0; resolve_due = 0
+    deep_due = 0
     markets = await fetch_markets()
     log.info(f"[{BOT_NAME}] Loaded {len(markets)} markets")
 
@@ -448,7 +488,6 @@ async def main():
         now = asyncio.get_event_loop().time()
         if now - ai_win >= 60: ai_pm = 0; ai_win = now
 
-        # Tier 1: price spike detection
         spikes = []
         for m in markets:
             mid = m["id"]; cur = m["yes_price"]
@@ -468,24 +507,19 @@ async def main():
             if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] not in ("HOLD","SKIP"):
                 await do_trade(m, a, db, "price_spike")
 
-        # Tier 2: deep scan
         if now >= deep_due:
             deep_due = now + DEEP_SCAN_SECS
             markets = await fetch_markets(); traded = 0
-
             settled = await resolve_settled(db)
             if settled:
                 log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
-
             s = db.stats()
             resolved_total = s["won"] + s["lost"]
             if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
                 log.info(f"[{BOT_NAME}] Running strategy review...")
                 strategy_context, strategy_version = await improve_strategy(db, strategy_context, strategy_version)
                 resolved_at_last_review = resolved_total
-
             log.info(f"[{BOT_NAME}] Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f} | WR:{s['win_rate']:.1f}%")
-
             for m in markets:
                 if db.has_open(m["id"]) or ai_pm >= MAX_AI_PER_MIN: continue
                 s = db.stats()
@@ -496,7 +530,6 @@ async def main():
                 if a["confidence"] >= CONFIDENCE_MIN and a["recommendation"] not in ("HOLD","SKIP"):
                     if await do_trade(m, a, db, "deep_scan"): traded += 1
                 await asyncio.sleep(0.3)
-
             s = db.stats()
             log.info(f"[{BOT_NAME}] Deep scan — {traded} new | Open:{s['open_positions']} | Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f}")
 
