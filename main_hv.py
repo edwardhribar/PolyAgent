@@ -1,12 +1,13 @@
 """
 PolyAgent HV Bot v5
 - Proper Polymarket L2 auth via py-clob-client
-- Fixed resolution: checks closed/archived markets properly
+- Fixed JSON parsing
+- More aggressive trading prompts
 - Daily P&L tracking
 - Self-improving every 20 resolved trades
 """
 
-import os, json, logging, asyncio, aiohttp, sqlite3, threading
+import os, json, re, logging, asyncio, aiohttp, sqlite3, threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -38,9 +39,9 @@ API_PORT        = int(os.getenv("PORT", "8080"))
 BOT_NAME        = "HV"
 MODEL           = "claude-haiku-4-5-20251001"
 
-GAMMA_API = "https://gamma-api.polymarket.com"
-CLOB_API  = "https://clob.polymarket.com"
-ANT_API   = "https://api.anthropic.com/v1/messages"
+GAMMA_API = "https://urldefense.proofpoint.com/v2/url?u=https-3A__gamma-2Dapi.polymarket.com&d=DwIFaQ&c=sA0VaJZJFLZREu2pbPeqjXHJ-Wd9NNzgHW3gpUOLSSk&r=pbmvN0mDxVEpu7tX1EatD5G_5OTXtRtCJi4e3XMt2nA&m=EUOxM1bj4rKuKTNB3LiYxz91WaaRZvXOIpp5BtRU5Z8OfcraWNrFK_WIdlqZBClh&s=IyIBJqkHI3UTdfXv30ls-BjPMQDtg5vKtFn7yW9dXho&e= "
+CLOB_API  = "https://urldefense.proofpoint.com/v2/url?u=https-3A__clob.polymarket.com&d=DwIFaQ&c=sA0VaJZJFLZREu2pbPeqjXHJ-Wd9NNzgHW3gpUOLSSk&r=pbmvN0mDxVEpu7tX1EatD5G_5OTXtRtCJi4e3XMt2nA&m=EUOxM1bj4rKuKTNB3LiYxz91WaaRZvXOIpp5BtRU5Z8OfcraWNrFK_WIdlqZBClh&s=Z7byboTpOMm5nbOReWDf3LHYDi-7TJRcqlV47lTcNcc&e= "
+ANT_API   = "https://urldefense.proofpoint.com/v2/url?u=https-3A__api.anthropic.com_v1_messages&d=DwIFaQ&c=sA0VaJZJFLZREu2pbPeqjXHJ-Wd9NNzgHW3gpUOLSSk&r=pbmvN0mDxVEpu7tX1EatD5G_5OTXtRtCJi4e3XMt2nA&m=EUOxM1bj4rKuKTNB3LiYxz91WaaRZvXOIpp5BtRU5Z8OfcraWNrFK_WIdlqZBClh&s=DyoBep-Dc9sc-Sk-tDFtlIZaqk406K2MGA0r6LS7cVc&e= "
 
 KEYWORDS = {
     "Politics":     ["politics","election","president","congress","vote","government","senate","republican","democrat"],
@@ -55,15 +56,20 @@ def get_clob_client():
     if clob_client is None and POLY_PRIVATE_KEY:
         try:
             from py_clob_client.client import ClobClient
-            clob_client = ClobClient(
-                host=CLOB_API,
-                key=POLY_PRIVATE_KEY,
-                chain_id=137,
-            )
+            clob_client = ClobClient(host=CLOB_API, key=POLY_PRIVATE_KEY, chain_id=137)
             log.info(f"[{BOT_NAME}] CLOB client initialized")
         except Exception as e:
             log.error(f"CLOB client init failed: {e}")
     return clob_client
+
+def parse_json(text):
+    """Robustly extract JSON from Claude's response."""
+    try:
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except: pass
+    return None
 
 class DB:
     def __init__(self, path="data/hv.db"):
@@ -190,26 +196,18 @@ def api_thread():
     HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    params = {
-        "active": "true",
-        "closed": "false",
-        "limit": 100,
-        "order": "endDate",
-        "ascending": "true",
-    }
+    params = {"active":"true","closed":"false","limit":100,"order":"endDate","ascending":"true"}
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(f"{GAMMA_API}/markets", params=params,
                 timeout=aiohttp.ClientTimeout(total=10)) as r:
                 if r.status != 200:
-                    log.error(f"Fetch HTTP {r.status}")
-                    return []
+                    log.error(f"Fetch HTTP {r.status}"); return []
                 data = await r.json()
     except Exception as e:
         log.debug(f"Fetch: {e}"); return []
 
     log.info(f"[{BOT_NAME}] Raw markets from API: {len(data)}")
-
     out = []
     for m in data:
         try:
@@ -254,20 +252,25 @@ async def analyze(market, stats, strategy_context="", trigger="deep_scan"):
 
     urg = "URGENT - price just spiked" if trigger=="price_spike" else "routine scan"
     strategy_section = f"\n\nLearned strategy:\n{strategy_context}" if strategy_context else ""
-    prompt = f"""Aggressive prediction market trader. Trade markets resolving within {MAX_HOURS} hours.
+    prompt = f"""You are an aggressive prediction market trader. Find edges and place trades.
 
 Market: "{market['question']}"
 Closes in: {hours_left} | Trigger: {urg}
-YES: {market['yes_price']:.3f} | NO: {market['no_price']:.3f}
+YES price: {market['yes_price']:.3f} ({market['yes_price']*100:.1f}%)
+NO price: {market['no_price']:.3f} ({market['no_price']*100:.1f}%)
 Volume: ${market['volume']:,.0f} | Category: {market['category']}
 
-Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
+Portfolio: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | P&L:${stats['total_pnl']:.2f}
 {strategy_section}
 
-Be aggressive. Bias toward trading. Use HOLD if truly 50/50.
-recommendation must be BUY_YES, BUY_NO, or HOLD only.
-Respond ONLY with valid JSON:
-{{"recommendation":"BUY_YES","confidence":68,"edge":"brief","reasoning":"1-2 sentences.","risk_level":"MEDIUM","fair_value":0.65,"suggested_size_pct":0.75}}"""
+Instructions:
+- Strong bias toward trading. HOLD only if truly no edge
+- If outcome seems likely (>60% chance), trade it
+- High volume markets with clear narratives deserve high confidence (70-90%)
+- Be aggressive and decisive
+
+Respond with ONLY a JSON object, nothing else before or after:
+{{"recommendation":"BUY_YES","confidence":75,"edge":"brief reason","reasoning":"1-2 sentences.","risk_level":"MEDIUM","fair_value":0.65,"suggested_size_pct":0.75}}"""
 
     raw_text = ""
     try:
@@ -282,7 +285,10 @@ Respond ONLY with valid JSON:
                     return None
                 d = await r.json()
         raw_text = "".join(b.get("text","") for b in d.get("content",[]))
-        res = json.loads(raw_text.replace("```json","").replace("```","").strip())
+        res = parse_json(raw_text)
+        if not res:
+            log.error(f"AI JSON parse failed | raw: {raw_text[:200]}")
+            return None
         if res.get("recommendation") in ("SKIP","PASS","NO_TRADE"):
             res["recommendation"] = "HOLD"
         if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
@@ -318,26 +324,18 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
         log.info(f"[{BOT_NAME}] PAPER #{tid} [{trigger}]: {side} '{market['question'][:45]}' @ {price:.3f} ${size}")
         return True
     if not POLY_PRIVATE_KEY:
-        log.error("POLYMARKET_API_KEY not set")
-        return False
+        log.error("POLYMARKET_API_KEY not set"); return False
     token_ids = market.get("token_ids", [])
     if len(token_ids) < 2:
-        log.error(f"No token IDs for market {market['id']}")
-        return False
+        log.error(f"No token IDs for market {market['id']}"); return False
     token_id = token_ids[0] if side == "YES" else token_ids[1]
     try:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import BUY
         client = get_clob_client()
         if not client:
-            log.error("CLOB client unavailable")
-            return False
-        order_args = OrderArgs(
-            token_id=str(token_id),
-            price=round(price, 4),
-            size=size,
-            side=BUY,
-        )
+            log.error("CLOB client unavailable"); return False
+        order_args = OrderArgs(token_id=str(token_id), price=round(price,4), size=size, side=BUY)
         signed_order = client.create_order(order_args)
         resp = client.post_order(signed_order, OrderType.GTC)
         if resp and resp.get("orderID"):
@@ -345,16 +343,14 @@ async def do_trade(market, analysis, db, trigger="deep_scan"):
             log.info(f"[{BOT_NAME}] ✅ ORDER PLACED: {side} '{market['question'][:45]}' @ {price:.3f} ${size} | ID:{resp['orderID']}")
             return True
         else:
-            log.error(f"Order rejected: {resp}")
-            return False
+            log.error(f"Order rejected: {resp}"); return False
     except Exception as e:
         log.error(f"Trade error: {type(e).__name__}: {e}", exc_info=True)
         return False
 
 async def check_market_resolved(mid, session):
     try:
-        async with session.get(f"{GAMMA_API}/markets/{mid}",
-            timeout=aiohttp.ClientTimeout(total=8)) as r:
+        async with session.get(f"{GAMMA_API}/markets/{mid}", timeout=aiohttp.ClientTimeout(total=8)) as r:
             if r.status == 200:
                 market = await r.json()
                 if (market.get("resolved") or market.get("closed") or
@@ -363,8 +359,7 @@ async def check_market_resolved(mid, session):
     except: pass
     for param in [{"id": mid, "closed": "true"}, {"id": mid, "archived": "true"}]:
         try:
-            async with session.get(f"{GAMMA_API}/markets", params=param,
-                timeout=aiohttp.ClientTimeout(total=8)) as r:
+            async with session.get(f"{GAMMA_API}/markets", params=param, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 if r.status == 200:
                     data = await r.json()
                     if data: return data[0]
@@ -410,7 +405,6 @@ async def resolve_settled(db):
                     won = (our_side == "YES" and winning_idx == 0) or (our_side == "NO" and winning_idx == 1)
                 else:
                     won = our_side == winning
-                log.info(f"[{BOT_NAME}] Resolving: side={our_side} winning={winning} outcomes={outcomes} idx={winning_idx} won={won}")
                 payout = trade["size"] / trade["price"] if won else 0.0
                 pnl = db.resolve(trade["id"], won, payout)
                 settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
@@ -435,16 +429,14 @@ async def improve_strategy(db, current_strategy, version):
     trade_summary = "\n".join([
         f"- [{t['status'].upper()}] {t['side']} '{t['question'][:50]}' conf={t['confidence']}% P&L=${t.get('pnl') or 0:.2f}"
         for t in resolved[:20]])
-    prompt = f"""Review aggressive HV Polymarket bot (trades within {MAX_HOURS} hours).
+    prompt = f"""Review aggressive HV Polymarket bot.
 
-Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f} | Today:${stats['daily_pnl']:.2f}
-Spike trades: {stats.get('spike_trades',0)}
+Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f}
 By category: {json.dumps(by_cat, indent=2)}
 Recent: {trade_summary}
 Current strategy v{version}: {current_strategy or "None yet"}
 
-Write improved aggressive strategy for short-term markets.
-Respond ONLY with valid JSON:
+Write improved aggressive strategy. Respond with ONLY a JSON object:
 {{"strategy":"detailed strategy","key_insight":"main finding","thresholds":{{"Politics":45,"Sports":42,"Crypto":40,"World Events":45}},"version":{version+1}}}"""
     try:
         async with aiohttp.ClientSession() as s:
@@ -455,7 +447,8 @@ Respond ONLY with valid JSON:
                 if r.status != 200: return current_strategy, version
                 d = await r.json()
         txt = "".join(b.get("text","") for b in d.get("content",[]))
-        res = json.loads(txt.replace("```json","").replace("```","").strip())
+        res = parse_json(txt)
+        if not res: return current_strategy, version
         new_strategy = res.get("strategy","")
         new_version = res.get("version", version+1)
         key_insight = res.get("key_insight","")
@@ -537,3 +530,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
