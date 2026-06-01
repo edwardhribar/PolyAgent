@@ -54,7 +54,9 @@ def get_clob_client():
        try:
            from py_clob_client.client import ClobClient
            clob_client = ClobClient(host=CLOB_API, key=POLY_PRIVATE_KEY, chain_id=137)
-           log.info(f"[{BOT_NAME}] CLOB client initialized")
+           creds = clob_client.create_or_derive_api_creds()
+           clob_client.set_api_creds(creds)
+           log.info(f"[{BOT_NAME}] CLOB client initialized with L2 auth")
        except Exception as e:
            log.error(f"CLOB client init failed: {e}")
    return clob_client
@@ -191,8 +193,7 @@ async def fetch_markets():
                    log.error(f"Fetch HTTP {r.status}"); return []
                ct = r.headers.get("Content-Type","")
                if "html" in ct:
-                   log.error(f"Fetch returned HTML — API may have changed. URL: {r.url}")
-                   return []
+                   log.error(f"Fetch returned HTML. URL: {r.url}"); return []
                data = await r.json(content_type=None)
    except Exception as e:
        log.error(f"Fetch: {e}"); return []
