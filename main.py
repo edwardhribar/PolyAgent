@@ -16,7 +16,7 @@ Path("logs").mkdir(exist_ok=True)
 Path("data").mkdir(exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("logs/agent.log"), logging.StreamHandler()])
+   handlers=[logging.FileHandler("logs/agent.log"), logging.StreamHandler()])
 log = logging.getLogger("polyagent")
 
 WALLET          = os.getenv("WALLET_ADDRESS", "0xd45996A1d51A0C478cb499b1bc24386734000C9f")
@@ -36,208 +36,212 @@ API_PORT        = int(os.getenv("PORT", "8080"))
 BOT_NAME        = "Conservative"
 MODEL           = "claude-haiku-4-5-20251001"
 
-GAMMA_API = "https://urldefense.proofpoint.com/v2/url?u=https-3A__gamma-2Dapi.polymarket.com&d=DwIFaQ&c=sA0VaJZJFLZREu2pbPeqjXHJ-Wd9NNzgHW3gpUOLSSk&r=pbmvN0mDxVEpu7tX1EatD5G_5OTXtRtCJi4e3XMt2nA&m=EUOxM1bj4rKuKTNB3LiYxz91WaaRZvXOIpp5BtRU5Z8OfcraWNrFK_WIdlqZBClh&s=IyIBJqkHI3UTdfXv30ls-BjPMQDtg5vKtFn7yW9dXho&e= "
-CLOB_API  = "https://urldefense.proofpoint.com/v2/url?u=https-3A__clob.polymarket.com&d=DwIFaQ&c=sA0VaJZJFLZREu2pbPeqjXHJ-Wd9NNzgHW3gpUOLSSk&r=pbmvN0mDxVEpu7tX1EatD5G_5OTXtRtCJi4e3XMt2nA&m=EUOxM1bj4rKuKTNB3LiYxz91WaaRZvXOIpp5BtRU5Z8OfcraWNrFK_WIdlqZBClh&s=Z7byboTpOMm5nbOReWDf3LHYDi-7TJRcqlV47lTcNcc&e= "
-ANT_API   = "https://urldefense.proofpoint.com/v2/url?u=https-3A__api.anthropic.com_v1_messages&d=DwIFaQ&c=sA0VaJZJFLZREu2pbPeqjXHJ-Wd9NNzgHW3gpUOLSSk&r=pbmvN0mDxVEpu7tX1EatD5G_5OTXtRtCJi4e3XMt2nA&m=EUOxM1bj4rKuKTNB3LiYxz91WaaRZvXOIpp5BtRU5Z8OfcraWNrFK_WIdlqZBClh&s=DyoBep-Dc9sc-Sk-tDFtlIZaqk406K2MGA0r6LS7cVc&e= "
+GAMMA_API = "https://gamma-api.polymarket.com"
+CLOB_API  = "https://clob.polymarket.com"
+ANT_API   = "https://api.anthropic.com/v1/messages"
 
 KEYWORDS = {
-    "Politics":     ["politics","election","president","congress","vote","government","senate","republican","democrat"],
-    "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","super bowl","world cup","playoff","relegated","tonight","game","match","league","golden knights","ducks","lakers","celtics"],
-    "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
-    "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
+   "Politics":     ["politics","election","president","congress","vote","government","senate","republican","democrat"],
+   "Sports":       ["nfl","nba","mlb","nhl","soccer","championship","win","super bowl","world cup","playoff","relegated","tonight","game","match","league","golden knights","ducks","lakers","celtics"],
+   "Crypto":       ["bitcoin","ethereum","btc","eth","crypto","price","above","below","reach","up or down"],
+   "World Events": ["war","economy","climate","ai","tech","recession","gdp","rate","fed"],
 }
 
 clob_client = None
 def get_clob_client():
-    global clob_client
-    if clob_client is None and POLY_PRIVATE_KEY:
-        try:
-            from py_clob_client.client import ClobClient
-            clob_client = ClobClient(host=CLOB_API, key=POLY_PRIVATE_KEY, chain_id=137)
-            log.info(f"[{BOT_NAME}] CLOB client initialized")
-        except Exception as e:
-            log.error(f"CLOB client init failed: {e}")
-    return clob_client
+   global clob_client
+   if clob_client is None and POLY_PRIVATE_KEY:
+       try:
+           from py_clob_client.client import ClobClient
+           clob_client = ClobClient(host=CLOB_API, key=POLY_PRIVATE_KEY, chain_id=137)
+           log.info(f"[{BOT_NAME}] CLOB client initialized")
+       except Exception as e:
+           log.error(f"CLOB client init failed: {e}")
+   return clob_client
 
 def parse_json(text):
-    """Robustly extract JSON from Claude's response."""
-    try:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-    except: pass
-    return None
+   try:
+       match = re.search(r'\{.*\}', text, re.DOTALL)
+       if match:
+           return json.loads(match.group())
+   except: pass
+   return None
 
 class DB:
-    def __init__(self, path="data/polyagent.db"):
-        self.path = path
-        with self._c() as db:
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    market_id TEXT, question TEXT, category TEXT,
-                    side TEXT, price REAL, size REAL, confidence INTEGER,
-                    fair_value REAL, reasoning TEXT, paper INTEGER DEFAULT 1,
-                    status TEXT DEFAULT 'open', outcome REAL, pnl REAL,
-                    placed_at TEXT, resolved_at TEXT, order_id TEXT, end_date TEXT);
-                CREATE TABLE IF NOT EXISTS strategy_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT, version INTEGER, notes TEXT,
-                    thresholds TEXT, win_rate REAL, total_trades INTEGER, strategy TEXT);
-            """)
+   def __init__(self, path="data/polyagent.db"):
+       self.path = path
+       with self._c() as db:
+           db.executescript("""
+               CREATE TABLE IF NOT EXISTS trades (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   market_id TEXT, question TEXT, category TEXT,
+                   side TEXT, price REAL, size REAL, confidence INTEGER,
+                   fair_value REAL, reasoning TEXT, paper INTEGER DEFAULT 1,
+                   status TEXT DEFAULT 'open', outcome REAL, pnl REAL,
+                   placed_at TEXT, resolved_at TEXT, order_id TEXT, end_date TEXT);
+               CREATE TABLE IF NOT EXISTS strategy_log (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   timestamp TEXT, version INTEGER, notes TEXT,
+                   thresholds TEXT, win_rate REAL, total_trades INTEGER, strategy TEXT);
+           """)
 
-    def _c(self):
-        c = sqlite3.connect(self.path); c.row_factory = sqlite3.Row; return c
+   def _c(self):
+       c = sqlite3.connect(self.path); c.row_factory = sqlite3.Row; return c
 
-    def record(self, market, analysis, size, paper=True, order_id=None):
-        side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
-        price = market["yes_price"] if side == "YES" else 1 - market["yes_price"]
-        now = datetime.now(timezone.utc).isoformat()
-        with self._c() as db:
-            cur = db.execute(
-                "INSERT INTO trades (market_id,question,category,side,price,size,confidence,fair_value,reasoning,paper,status,placed_at,order_id,end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (market["id"],market["question"],market.get("category"),side,price,size,
-                 analysis.get("confidence"),analysis.get("fair_value"),analysis.get("reasoning"),
-                 1 if paper else 0,"open",now,order_id,market.get("end_date")))
-            return cur.lastrowid
+   def record(self, market, analysis, size, paper=True, order_id=None):
+       side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
+       price = market["yes_price"] if side == "YES" else 1 - market["yes_price"]
+       now = datetime.now(timezone.utc).isoformat()
+       with self._c() as db:
+           cur = db.execute(
+               "INSERT INTO trades (market_id,question,category,side,price,size,confidence,fair_value,reasoning,paper,status,placed_at,order_id,end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+               (market["id"],market["question"],market.get("category"),side,price,size,
+                analysis.get("confidence"),analysis.get("fair_value"),analysis.get("reasoning"),
+                1 if paper else 0,"open",now,order_id,market.get("end_date")))
+           return cur.lastrowid
 
-    def open_trades(self):
-        with self._c() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM trades WHERE status='open'").fetchall()]
+   def open_trades(self):
+       with self._c() as db:
+           return [dict(r) for r in db.execute("SELECT * FROM trades WHERE status='open'").fetchall()]
 
-    def get(self, tid):
-        with self._c() as db:
-            r = db.execute("SELECT * FROM trades WHERE id=?",(tid,)).fetchone()
-            return dict(r) if r else None
+   def get(self, tid):
+       with self._c() as db:
+           r = db.execute("SELECT * FROM trades WHERE id=?",(tid,)).fetchone()
+           return dict(r) if r else None
 
-    def resolve(self, tid, won, payout):
-        t = self.get(tid); pnl = payout - t["size"]
-        with self._c() as db:
-            db.execute("UPDATE trades SET status=?,outcome=?,pnl=?,resolved_at=? WHERE id=?",
-                       ("won" if won else "lost",payout,pnl,datetime.now(timezone.utc).isoformat(),tid))
-        log.info(f"[{BOT_NAME}] #{tid} {'WON' if won else 'LOST'} P&L:${pnl:.2f}")
-        return pnl
+   def resolve(self, tid, won, payout):
+       t = self.get(tid); pnl = payout - t["size"]
+       with self._c() as db:
+           db.execute("UPDATE trades SET status=?,outcome=?,pnl=?,resolved_at=? WHERE id=?",
+                      ("won" if won else "lost",payout,pnl,datetime.now(timezone.utc).isoformat(),tid))
+       log.info(f"[{BOT_NAME}] #{tid} {'WON' if won else 'LOST'} P&L:${pnl:.2f}")
+       return pnl
 
-    def has_open(self, mid):
-        with self._c() as db:
-            return db.execute("SELECT id FROM trades WHERE market_id=? AND status='open'",(mid,)).fetchone() is not None
+   def has_open(self, mid):
+       with self._c() as db:
+           return db.execute("SELECT id FROM trades WHERE market_id=? AND status='open'",(mid,)).fetchone() is not None
 
-    def recent(self, n=10):
-        with self._c() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?",(n,)).fetchall()]
+   def recent(self, n=10):
+       with self._c() as db:
+           return [dict(r) for r in db.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?",(n,)).fetchall()]
 
-    def get_resolved(self, limit=50):
-        with self._c() as db:
-            return [dict(r) for r in db.execute(
-                "SELECT * FROM trades WHERE status IN ('won','lost') ORDER BY resolved_at DESC LIMIT ?",(limit,)).fetchall()]
+   def get_resolved(self, limit=50):
+       with self._c() as db:
+           return [dict(r) for r in db.execute(
+               "SELECT * FROM trades WHERE status IN ('won','lost') ORDER BY resolved_at DESC LIMIT ?",(limit,)).fetchall()]
 
-    def daily_pnl(self):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        with self._c() as db:
-            row = db.execute("SELECT SUM(pnl) FROM trades WHERE resolved_at LIKE ? AND pnl IS NOT NULL",(f"{today}%",)).fetchone()
-        return round(row[0] or 0, 2)
+   def daily_pnl(self):
+       today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+       with self._c() as db:
+           row = db.execute("SELECT SUM(pnl) FROM trades WHERE resolved_at LIKE ? AND pnl IS NOT NULL",(f"{today}%",)).fetchone()
+       return round(row[0] or 0, 2)
 
-    def stats(self):
-        with self._c() as db:
-            tot = db.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-            op  = db.execute("SELECT COUNT(*) FROM trades WHERE status='open'").fetchone()[0]
-            won = db.execute("SELECT COUNT(*) FROM trades WHERE status='won'").fetchone()[0]
-            lst = db.execute("SELECT COUNT(*) FROM trades WHERE status='lost'").fetchone()[0]
-            pnl = db.execute("SELECT SUM(pnl) FROM trades WHERE pnl IS NOT NULL").fetchone()[0]
-            inv = db.execute("SELECT SUM(size) FROM trades WHERE status='open'").fetchone()[0]
-        res = won + lst
-        return {"bot":BOT_NAME,"total_trades":tot,"open_positions":op,"won":won,"lost":lst,
-                "win_rate":round((won/res*100) if res>0 else 0,1),"total_pnl":round(pnl or 0,2),
-                "daily_pnl":self.daily_pnl(),"invested":round(inv or 0,2),"paper_mode":PAPER_MODE}
+   def stats(self):
+       with self._c() as db:
+           tot = db.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+           op  = db.execute("SELECT COUNT(*) FROM trades WHERE status='open'").fetchone()[0]
+           won = db.execute("SELECT COUNT(*) FROM trades WHERE status='won'").fetchone()[0]
+           lst = db.execute("SELECT COUNT(*) FROM trades WHERE status='lost'").fetchone()[0]
+           pnl = db.execute("SELECT SUM(pnl) FROM trades WHERE pnl IS NOT NULL").fetchone()[0]
+           inv = db.execute("SELECT SUM(size) FROM trades WHERE status='open'").fetchone()[0]
+       res = won + lst
+       return {"bot":BOT_NAME,"total_trades":tot,"open_positions":op,"won":won,"lost":lst,
+               "win_rate":round((won/res*100) if res>0 else 0,1),"total_pnl":round(pnl or 0,2),
+               "daily_pnl":self.daily_pnl(),"invested":round(inv or 0,2),"paper_mode":PAPER_MODE}
 
-    def save_strategy(self, version, notes, thresholds, win_rate, total_trades, strategy_text):
-        with self._c() as db:
-            db.execute("INSERT INTO strategy_log (timestamp,version,notes,thresholds,win_rate,total_trades,strategy) VALUES (?,?,?,?,?,?,?)",
-                (datetime.now(timezone.utc).isoformat(),version,notes,json.dumps(thresholds),win_rate,total_trades,strategy_text))
+   def save_strategy(self, version, notes, thresholds, win_rate, total_trades, strategy_text):
+       with self._c() as db:
+           db.execute("INSERT INTO strategy_log (timestamp,version,notes,thresholds,win_rate,total_trades,strategy) VALUES (?,?,?,?,?,?,?)",
+               (datetime.now(timezone.utc).isoformat(),version,notes,json.dumps(thresholds),win_rate,total_trades,strategy_text))
 
-    def get_latest_strategy(self):
-        with self._c() as db:
-            row = db.execute("SELECT * FROM strategy_log ORDER BY version DESC LIMIT 1").fetchone()
-            return dict(row) if row else None
+   def get_latest_strategy(self):
+       with self._c() as db:
+           row = db.execute("SELECT * FROM strategy_log ORDER BY version DESC LIMIT 1").fetchone()
+           return dict(row) if row else None
 
 db_g = None
 
 class API(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type","application/json")
-        self.send_header("Access-Control-Allow-Origin","*")
-        self.end_headers()
-        if self.path == "/api/stats":
-            s = db_g.stats(); t = db_g.recent(10)
-            payload = {**s,"recent_trades":[{"question":x["question"][:60],"side":x["side"],
-                "price":x["price"],"size":x["size"],"confidence":x["confidence"],
-                "status":x["status"],"pnl":x["pnl"],"placed_at":x["placed_at"],
-                "end_date":x.get("end_date")} for x in t]}
-            self.wfile.write(json.dumps(payload).encode())
-        else: self.wfile.write(b'{"status":"ok"}')
-    def log_message(self, *a): pass
+   def do_GET(self):
+       self.send_response(200)
+       self.send_header("Content-type","application/json")
+       self.send_header("Access-Control-Allow-Origin","*")
+       self.end_headers()
+       if self.path == "/api/stats":
+           s = db_g.stats(); t = db_g.recent(10)
+           payload = {**s,"recent_trades":[{"question":x["question"][:60],"side":x["side"],
+               "price":x["price"],"size":x["size"],"confidence":x["confidence"],
+               "status":x["status"],"pnl":x["pnl"],"placed_at":x["placed_at"],
+               "end_date":x.get("end_date")} for x in t]}
+           self.wfile.write(json.dumps(payload).encode())
+       else: self.wfile.write(b'{"status":"ok"}')
+   def log_message(self, *a): pass
 
 def api_thread():
-    HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
+   HTTPServer(("0.0.0.0", API_PORT), API).serve_forever()
 
 async def fetch_markets():
-    params = {"active":"true","closed":"false","limit":100,"order":"endDate","ascending":"true"}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{GAMMA_API}/markets", params=params,
-                timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status != 200:
-                    log.error(f"Fetch HTTP {r.status}"); return []
-                data = await r.json()
-    except Exception as e:
-        log.error(f"Fetch: {e}"); return []
+   params = {"active":"true","closed":"false","limit":100,"order":"endDate","ascending":"true"}
+   headers = {"Accept": "application/json", "User-Agent": "PolyAgent/1.0"}
+   try:
+       async with aiohttp.ClientSession(headers=headers) as s:
+           async with s.get(f"{GAMMA_API}/markets", params=params,
+               timeout=aiohttp.ClientTimeout(total=15)) as r:
+               if r.status != 200:
+                   log.error(f"Fetch HTTP {r.status}"); return []
+               ct = r.headers.get("Content-Type","")
+               if "html" in ct:
+                   log.error(f"Fetch returned HTML — API may have changed. URL: {r.url}")
+                   return []
+               data = await r.json(content_type=None)
+   except Exception as e:
+       log.error(f"Fetch: {e}"); return []
 
-    log.info(f"[{BOT_NAME}] Raw markets from API: {len(data)}")
-    out = []
-    for m in data:
-        try:
-            vol = float(m.get("volume") or 0)
-            liq = float(m.get("liquidity") or 0)
-            if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
-            yp = 0.5
-            try: yp = float(json.loads(m.get("outcomePrices") or "[0.5]")[0])
-            except: pass
-            if yp < 0.05 or yp > 0.95: continue
-            end_date_str = str(m.get("endDate") or m.get("end_date") or "")
-            txt = (m.get("question") or m.get("title") or "").lower()
-            cat = "World Events"
-            for c, kw in KEYWORDS.items():
-                if any(k in txt for k in kw): cat = c; break
-            token_ids = []
-            try:
-                raw = m.get("clobTokenIds") or "[]"
-                token_ids = json.loads(raw) if isinstance(raw, str) else raw
-            except: pass
-            out.append({
-                "id": m.get("id") or m.get("conditionId"),
-                "question": m.get("question") or m.get("title") or "Unknown",
-                "yes_price": yp, "no_price": 1-yp,
-                "volume": vol, "liquidity": liq,
-                "end_date": end_date_str, "category": cat,
-                "token_ids": token_ids,
-            })
-        except: continue
+   log.info(f"[{BOT_NAME}] Raw markets from API: {len(data)}")
+   out = []
+   for m in data:
+       try:
+           vol = float(m.get("volume") or 0)
+           liq = float(m.get("liquidity") or 0)
+           if vol < MIN_VOLUME or liq < MIN_LIQUIDITY: continue
+           yp = 0.5
+           try: yp = float(json.loads(m.get("outcomePrices") or "[0.5]")[0])
+           except: pass
+           if yp < 0.05 or yp > 0.95: continue
+           end_date_str = str(m.get("endDate") or m.get("end_date") or "")
+           txt = (m.get("question") or m.get("title") or "").lower()
+           cat = "World Events"
+           for c, kw in KEYWORDS.items():
+               if any(k in txt for k in kw): cat = c; break
+           token_ids = []
+           try:
+               raw = m.get("clobTokenIds") or "[]"
+               token_ids = json.loads(raw) if isinstance(raw, str) else raw
+           except: pass
+           out.append({
+               "id": m.get("id") or m.get("conditionId"),
+               "question": m.get("question") or m.get("title") or "Unknown",
+               "yes_price": yp, "no_price": 1-yp,
+               "volume": vol, "liquidity": liq,
+               "end_date": end_date_str, "category": cat,
+               "token_ids": token_ids,
+           })
+       except: continue
 
-    log.info(f"[{BOT_NAME}] Found {len(out)} tradeable markets")
-    return out[:MARKETS_PER_SCAN]
+   log.info(f"[{BOT_NAME}] Found {len(out)} tradeable markets")
+   return out[:MARKETS_PER_SCAN]
 
 async def analyze(market, stats, strategy_context=""):
-    if not ANTHROPIC_KEY: return None
-    hours_left = "unknown"
-    try:
-        end_dt = datetime.strptime(market["end_date"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        diff = end_dt - datetime.now(timezone.utc)
-        hours_left = f"{diff.total_seconds()/3600:.1f}hrs"
-    except: pass
+   if not ANTHROPIC_KEY: return None
+   hours_left = "unknown"
+   try:
+       end_dt = datetime.strptime(market["end_date"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+       diff = end_dt - datetime.now(timezone.utc)
+       hours_left = f"{diff.total_seconds()/3600:.1f}hrs"
+   except: pass
 
-    strategy_section = f"\n\nLearned strategy:\n{strategy_context}" if strategy_context else ""
-    prompt = f"""You are a prediction market trading agent. Find edges and place trades.
+   strategy_section = f"\n\nLearned strategy:\n{strategy_context}" if strategy_context else ""
+   prompt = f"""You are a prediction market trading agent. Find edges and place trades.
 
 Market: "{market['question']}"
 Closes in: {hours_left}
@@ -259,164 +263,164 @@ Instructions:
 Respond with ONLY a JSON object, nothing else before or after:
 {{"recommendation":"BUY_YES","confidence":75,"edge":"brief reason","reasoning":"2 sentences.","risk_level":"MEDIUM","fair_value":0.72,"suggested_size_pct":0.5}}"""
 
-    raw_text = ""
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(ANT_API,
-                headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
-                json={"model":MODEL,"max_tokens":400,"messages":[{"role":"user","content":prompt}]},
-                timeout=aiohttp.ClientTimeout(total=30)) as r:
-                if r.status != 200:
-                    body = await r.text()
-                    log.error(f"AI HTTP {r.status}: {body[:300]}")
-                    return None
-                d = await r.json()
-        raw_text = "".join(b.get("text","") for b in d.get("content",[]))
-        res = parse_json(raw_text)
-        if not res:
-            log.error(f"AI JSON parse failed | raw: {raw_text[:200]}")
-            return None
-        if res.get("recommendation") in ("SKIP","PASS","NO_TRADE"):
-            res["recommendation"] = "HOLD"
-        if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
-            log.error(f"AI bad recommendation: {res.get('recommendation')} | raw: {raw_text[:200]}")
-            return None
-        res["category"] = market.get("category")
-        return res
-    except Exception as e:
-        log.error(f"AI error: {type(e).__name__}: {e} | raw: {raw_text[:200]}", exc_info=True)
-        return None
+   raw_text = ""
+   try:
+       async with aiohttp.ClientSession() as s:
+           async with s.post(ANT_API,
+               headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
+               json={"model":MODEL,"max_tokens":400,"messages":[{"role":"user","content":prompt}]},
+               timeout=aiohttp.ClientTimeout(total=30)) as r:
+               if r.status != 200:
+                   body = await r.text()
+                   log.error(f"AI HTTP {r.status}: {body[:300]}")
+                   return None
+               d = await r.json()
+       raw_text = "".join(b.get("text","") for b in d.get("content",[]))
+       res = parse_json(raw_text)
+       if not res:
+           log.error(f"AI JSON parse failed | raw: {raw_text[:200]}")
+           return None
+       if res.get("recommendation") in ("SKIP","PASS","NO_TRADE"):
+           res["recommendation"] = "HOLD"
+       if res.get("recommendation") not in ("BUY_YES","BUY_NO","HOLD"):
+           log.error(f"AI bad recommendation: {res.get('recommendation')} | raw: {raw_text[:200]}")
+           return None
+       res["category"] = market.get("category")
+       return res
+   except Exception as e:
+       log.error(f"AI error: {type(e).__name__}: {e} | raw: {raw_text[:200]}", exc_info=True)
+       return None
 
 def kelly_size(analysis, price, max_bet):
-    try:
-        fair = float(analysis.get("fair_value") or price)
-        fair = max(0.05, min(0.95, fair))
-        p = fair; q = 1 - p
-        b = (1 / price) - 1
-        if b <= 0: return round(max_bet * 0.25, 2)
-        full_kelly = (b * p - q) / b
-        half_kelly = full_kelly / 2
-        fraction = max(0.25, min(1.0, half_kelly))
-        return max(round(max_bet * fraction, 2), round(max_bet * 0.25, 2))
-    except:
-        return round(max_bet * 0.5, 2)
+   try:
+       fair = float(analysis.get("fair_value") or price)
+       fair = max(0.05, min(0.95, fair))
+       p = fair; q = 1 - p
+       b = (1 / price) - 1
+       if b <= 0: return round(max_bet * 0.25, 2)
+       full_kelly = (b * p - q) / b
+       half_kelly = full_kelly / 2
+       fraction = max(0.25, min(1.0, half_kelly))
+       return max(round(max_bet * fraction, 2), round(max_bet * 0.25, 2))
+   except:
+       return round(max_bet * 0.5, 2)
 
 async def do_trade(market, analysis, db):
-    side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
-    price = market["yes_price"] if side == "YES" else market["no_price"]
-    size = kelly_size(analysis, price, MAX_TRADE)
-    log.info(f"[{BOT_NAME}] Kelly size: ${size} (fair_value:{analysis.get('fair_value','?')} price:{price:.3f})")
-    if db.stats()["open_positions"] >= MAX_POSITIONS: return False
-    if PAPER_MODE:
-        tid = db.record(market, analysis, size, paper=True)
-        log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' @ {price:.3f} ${size}")
-        return True
-    if not POLY_PRIVATE_KEY:
-        log.error("POLYMARKET_API_KEY not set"); return False
-    token_ids = market.get("token_ids", [])
-    if len(token_ids) < 2:
-        log.error(f"No token IDs for market {market['id']}"); return False
-    token_id = token_ids[0] if side == "YES" else token_ids[1]
-    try:
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import BUY
-        client = get_clob_client()
-        if not client:
-            log.error("CLOB client unavailable"); return False
-        order_args = OrderArgs(token_id=str(token_id), price=round(price,4), size=size, side=BUY)
-        signed_order = client.create_order(order_args)
-        resp = client.post_order(signed_order, OrderType.GTC)
-        if resp and resp.get("orderID"):
-            db.record(market, analysis, size, paper=False, order_id=resp["orderID"])
-            log.info(f"[{BOT_NAME}] ✅ ORDER PLACED: {side} '{market['question'][:50]}' @ {price:.3f} ${size} | ID:{resp['orderID']}")
-            return True
-        else:
-            log.error(f"Order rejected: {resp}"); return False
-    except Exception as e:
-        log.error(f"Trade error: {type(e).__name__}: {e}", exc_info=True)
-        return False
+   side = "YES" if analysis["recommendation"] == "BUY_YES" else "NO"
+   price = market["yes_price"] if side == "YES" else market["no_price"]
+   size = kelly_size(analysis, price, MAX_TRADE)
+   log.info(f"[{BOT_NAME}] Kelly size: ${size} (fair_value:{analysis.get('fair_value','?')} price:{price:.3f})")
+   if db.stats()["open_positions"] >= MAX_POSITIONS: return False
+   if PAPER_MODE:
+       tid = db.record(market, analysis, size, paper=True)
+       log.info(f"[{BOT_NAME}] PAPER #{tid}: {side} '{market['question'][:50]}' @ {price:.3f} ${size}")
+       return True
+   if not POLY_PRIVATE_KEY:
+       log.error("POLYMARKET_API_KEY not set"); return False
+   token_ids = market.get("token_ids", [])
+   if len(token_ids) < 2:
+       log.error(f"No token IDs for market {market['id']}"); return False
+   token_id = token_ids[0] if side == "YES" else token_ids[1]
+   try:
+       from py_clob_client.clob_types import OrderArgs, OrderType
+       from py_clob_client.order_builder.constants import BUY
+       client = get_clob_client()
+       if not client:
+           log.error("CLOB client unavailable"); return False
+       order_args = OrderArgs(token_id=str(token_id), price=round(price,4), size=size, side=BUY)
+       signed_order = client.create_order(order_args)
+       resp = client.post_order(signed_order, OrderType.GTC)
+       if resp and resp.get("orderID"):
+           db.record(market, analysis, size, paper=False, order_id=resp["orderID"])
+           log.info(f"[{BOT_NAME}] ✅ ORDER PLACED: {side} '{market['question'][:50]}' @ {price:.3f} ${size} | ID:{resp['orderID']}")
+           return True
+       else:
+           log.error(f"Order rejected: {resp}"); return False
+   except Exception as e:
+       log.error(f"Trade error: {type(e).__name__}: {e}", exc_info=True)
+       return False
 
 async def check_market_resolved(mid, session):
-    try:
-        async with session.get(f"{GAMMA_API}/markets/{mid}", timeout=aiohttp.ClientTimeout(total=8)) as r:
-            if r.status == 200:
-                market = await r.json()
-                if (market.get("resolved") or market.get("closed") or
-                        bool(market.get("winningOutcome")) or bool(market.get("resolutionTime"))):
-                    return market
-    except: pass
-    for param in [{"id": mid, "closed": "true"}, {"id": mid, "archived": "true"}]:
-        try:
-            async with session.get(f"{GAMMA_API}/markets", params=param, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    if data: return data[0]
-        except: pass
-    return None
+   try:
+       async with session.get(f"{GAMMA_API}/markets/{mid}", timeout=aiohttp.ClientTimeout(total=8)) as r:
+           if r.status == 200:
+               market = await r.json(content_type=None)
+               if (market.get("resolved") or market.get("closed") or
+                       bool(market.get("winningOutcome")) or bool(market.get("resolutionTime"))):
+                   return market
+   except: pass
+   for param in [{"id": mid, "closed": "true"}, {"id": mid, "archived": "true"}]:
+       try:
+           async with session.get(f"{GAMMA_API}/markets", params=param, timeout=aiohttp.ClientTimeout(total=8)) as r:
+               if r.status == 200:
+                   data = await r.json(content_type=None)
+                   if data: return data[0]
+       except: pass
+   return None
 
 async def resolve_settled(db):
-    open_trades = db.open_trades()
-    if not open_trades: return []
-    settled = []
-    async with aiohttp.ClientSession() as session:
-        for trade in open_trades:
-            mid = trade["market_id"]
-            try:
-                end_date = trade.get("end_date","")
-                if end_date:
-                    try:
-                        end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                        if datetime.now(timezone.utc) < end_dt: continue
-                    except: pass
-                market = await check_market_resolved(mid, session)
-                if not market: continue
-                winning = (market.get("winningOutcome") or "").upper().strip()
-                if not winning:
-                    try:
-                        prices = json.loads(market.get("outcomePrices") or "[]")
-                        outcomes = market.get("outcomes") or ["YES","NO"]
-                        if prices:
-                            float_prices = [float(p) for p in prices]
-                            max_val = max(float_prices)
-                            if max_val > 0.95:
-                                max_idx = float_prices.index(max_val)
-                                winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
-                    except: pass
-                if not winning: continue
-                outcomes = market.get("outcomes") or ["YES","NO"]
-                winning_idx = None
-                for i, o in enumerate(outcomes):
-                    if str(o).upper().strip() == winning:
-                        winning_idx = i; break
-                our_side = trade["side"].upper()
-                if winning_idx is not None:
-                    won = (our_side == "YES" and winning_idx == 0) or (our_side == "NO" and winning_idx == 1)
-                else:
-                    won = our_side == winning
-                payout = trade["size"] / trade["price"] if won else 0.0
-                pnl = db.resolve(trade["id"], won, payout)
-                settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
-                log.info(f"[{BOT_NAME}] ✓ Resolved '{trade['question'][:50]}' → {'WIN' if won else 'LOSS'} ${pnl:.2f}")
-            except Exception as e:
-                log.debug(f"Resolution check failed {mid}: {e}")
-    return settled
+   open_trades = db.open_trades()
+   if not open_trades: return []
+   settled = []
+   async with aiohttp.ClientSession(headers={"Accept":"application/json"}) as session:
+       for trade in open_trades:
+           mid = trade["market_id"]
+           try:
+               end_date = trade.get("end_date","")
+               if end_date:
+                   try:
+                       end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                       if datetime.now(timezone.utc) < end_dt: continue
+                   except: pass
+               market = await check_market_resolved(mid, session)
+               if not market: continue
+               winning = (market.get("winningOutcome") or "").upper().strip()
+               if not winning:
+                   try:
+                       prices = json.loads(market.get("outcomePrices") or "[]")
+                       outcomes = market.get("outcomes") or ["YES","NO"]
+                       if prices:
+                           float_prices = [float(p) for p in prices]
+                           max_val = max(float_prices)
+                           if max_val > 0.95:
+                               max_idx = float_prices.index(max_val)
+                               winning = str(outcomes[max_idx]).upper() if max_idx < len(outcomes) else ""
+                   except: pass
+               if not winning: continue
+               outcomes = market.get("outcomes") or ["YES","NO"]
+               winning_idx = None
+               for i, o in enumerate(outcomes):
+                   if str(o).upper().strip() == winning:
+                       winning_idx = i; break
+               our_side = trade["side"].upper()
+               if winning_idx is not None:
+                   won = (our_side == "YES" and winning_idx == 0) or (our_side == "NO" and winning_idx == 1)
+               else:
+                   won = our_side == winning
+               payout = trade["size"] / trade["price"] if won else 0.0
+               pnl = db.resolve(trade["id"], won, payout)
+               settled.append({**trade,"won":won,"payout":payout,"pnl":pnl})
+               log.info(f"[{BOT_NAME}] ✓ Resolved '{trade['question'][:50]}' → {'WIN' if won else 'LOSS'} ${pnl:.2f}")
+           except Exception as e:
+               log.debug(f"Resolution check failed {mid}: {e}")
+   return settled
 
 async def improve_strategy(db, current_strategy, version):
-    resolved = db.get_resolved(50)
-    if len(resolved) < 5:
-        log.info(f"[{BOT_NAME}] Not enough resolved trades for review")
-        return current_strategy, version
-    stats = db.stats()
-    by_cat = {}
-    for t in resolved:
-        cat = t.get("category","Unknown")
-        if cat not in by_cat: by_cat[cat] = {"won":0,"lost":0,"pnl":0}
-        if t["status"]=="won": by_cat[cat]["won"]+=1; by_cat[cat]["pnl"]+=t.get("pnl") or 0
-        else: by_cat[cat]["lost"]+=1; by_cat[cat]["pnl"]+=t.get("pnl") or 0
-    trade_summary = "\n".join([
-        f"- [{t['status'].upper()}] {t['side']} '{t['question'][:50]}' conf={t['confidence']}% P&L=${t.get('pnl') or 0:.2f}"
-        for t in resolved[:20]])
-    prompt = f"""Review this Polymarket trading agent.
+   resolved = db.get_resolved(50)
+   if len(resolved) < 5:
+       log.info(f"[{BOT_NAME}] Not enough resolved trades for review")
+       return current_strategy, version
+   stats = db.stats()
+   by_cat = {}
+   for t in resolved:
+       cat = t.get("category","Unknown")
+       if cat not in by_cat: by_cat[cat] = {"won":0,"lost":0,"pnl":0}
+       if t["status"]=="won": by_cat[cat]["won"]+=1; by_cat[cat]["pnl"]+=t.get("pnl") or 0
+       else: by_cat[cat]["lost"]+=1; by_cat[cat]["pnl"]+=t.get("pnl") or 0
+   trade_summary = "\n".join([
+       f"- [{t['status'].upper()}] {t['side']} '{t['question'][:50]}' conf={t['confidence']}% P&L=${t.get('pnl') or 0:.2f}"
+       for t in resolved[:20]])
+   prompt = f"""Review this Polymarket trading agent.
 
 Stats: {stats['total_trades']} trades | {stats['win_rate']:.1f}% WR | Total:${stats['total_pnl']:.2f}
 By category: {json.dumps(by_cat, indent=2)}
@@ -425,74 +429,74 @@ Current strategy v{version}: {current_strategy or "None yet"}
 
 Write improved strategy. Respond with ONLY a JSON object:
 {{"strategy":"detailed strategy text","key_insight":"main finding","thresholds":{{"Politics":75,"Sports":70,"Crypto":72,"World Events":75}},"version":{version+1}}}"""
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(ANT_API,
-                headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
-                json={"model":MODEL,"max_tokens":800,"messages":[{"role":"user","content":prompt}]},
-                timeout=aiohttp.ClientTimeout(total=30)) as r:
-                if r.status != 200: return current_strategy, version
-                d = await r.json()
-        txt = "".join(b.get("text","") for b in d.get("content",[]))
-        res = parse_json(txt)
-        if not res: return current_strategy, version
-        new_strategy = res.get("strategy","")
-        new_version = res.get("version", version+1)
-        key_insight = res.get("key_insight","")
-        thresholds = res.get("thresholds",{})
-        db.save_strategy(new_version, key_insight, thresholds, stats["win_rate"], stats["total_trades"], new_strategy)
-        log.info(f"[{BOT_NAME}] Strategy v{new_version}: {key_insight}")
-        return new_strategy, new_version
-    except Exception as e:
-        log.error(f"Strategy review: {e}")
-        return current_strategy, version
+   try:
+       async with aiohttp.ClientSession() as s:
+           async with s.post(ANT_API,
+               headers={"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
+               json={"model":MODEL,"max_tokens":800,"messages":[{"role":"user","content":prompt}]},
+               timeout=aiohttp.ClientTimeout(total=30)) as r:
+               if r.status != 200: return current_strategy, version
+               d = await r.json()
+       txt = "".join(b.get("text","") for b in d.get("content",[]))
+       res = parse_json(txt)
+       if not res: return current_strategy, version
+       new_strategy = res.get("strategy","")
+       new_version = res.get("version", version+1)
+       key_insight = res.get("key_insight","")
+       thresholds = res.get("thresholds",{})
+       db.save_strategy(new_version, key_insight, thresholds, stats["win_rate"], stats["total_trades"], new_strategy)
+       log.info(f"[{BOT_NAME}] Strategy v{new_version}: {key_insight}")
+       return new_strategy, new_version
+   except Exception as e:
+       log.error(f"Strategy review: {e}")
+       return current_strategy, version
 
 async def main():
-    global db_g
-    db = DB(); db_g = db
-    threading.Thread(target=api_thread, daemon=True).start()
-    log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
-    log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{BASE_CONFIDENCE}%")
-    if not PAPER_MODE:
-        get_clob_client()
-    saved = db.get_latest_strategy()
-    strategy_context = saved["strategy"] if saved else ""
-    strategy_version = saved["version"] if saved else 0
-    resolved_at_last_review = db.stats()["won"] + db.stats()["lost"]
-    cycle = 0
-    while True:
-        try:
-            cycle += 1
-            log.info(f"\n── Cycle #{cycle} ──")
-            settled = await resolve_settled(db)
-            if settled:
-                log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
-                for t in settled:
-                    log.info(f"  {'✓ WON' if t['won'] else '✗ LOST'} ${t.get('pnl',0):.2f} — {t['question'][:50]}")
-            s = db.stats()
-            resolved_total = s["won"] + s["lost"]
-            if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
-                log.info(f"[{BOT_NAME}] Running strategy review...")
-                strategy_context, strategy_version = await improve_strategy(db, strategy_context, strategy_version)
-                resolved_at_last_review = resolved_total
-            log.info(f"[{BOT_NAME}] Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f} | WR:{s['win_rate']:.1f}% | Open:{s['open_positions']}")
-            mkts = await fetch_markets()
-            traded = 0
-            for m in mkts:
-                if db.has_open(m["id"]): continue
-                s = db.stats()
-                if s["open_positions"] >= MAX_POSITIONS: break
-                a = await analyze(m, s, strategy_context)
-                if not a: continue
-                log.info(f"  '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[11:16]}")
-                if a["confidence"] >= BASE_CONFIDENCE and a["recommendation"] not in ("HOLD","SKIP"):
-                    if await do_trade(m, a, db): traded += 1
-                await asyncio.sleep(1)
-            s = db.stats()
-            log.info(f"Cycle #{cycle} done — {traded} new | Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f}")
-        except Exception as e:
-            log.error(f"Cycle error: {e}", exc_info=True)
-        await asyncio.sleep(SCAN_INTERVAL)
+   global db_g
+   db = DB(); db_g = db
+   threading.Thread(target=api_thread, daemon=True).start()
+   log.info(f"[{BOT_NAME}] Starting v5 | Paper:{PAPER_MODE} | Port:{API_PORT}")
+   log.info(f"Model:{MODEL} | Max hours:{MAX_HOURS}hrs | Confidence:{BASE_CONFIDENCE}%")
+   if not PAPER_MODE:
+       get_clob_client()
+   saved = db.get_latest_strategy()
+   strategy_context = saved["strategy"] if saved else ""
+   strategy_version = saved["version"] if saved else 0
+   resolved_at_last_review = db.stats()["won"] + db.stats()["lost"]
+   cycle = 0
+   while True:
+       try:
+           cycle += 1
+           log.info(f"\n── Cycle #{cycle} ──")
+           settled = await resolve_settled(db)
+           if settled:
+               log.info(f"[{BOT_NAME}] Resolved {len(settled)} trades!")
+               for t in settled:
+                   log.info(f"  {'✓ WON' if t['won'] else '✗ LOST'} ${t.get('pnl',0):.2f} — {t['question'][:50]}")
+           s = db.stats()
+           resolved_total = s["won"] + s["lost"]
+           if resolved_total - resolved_at_last_review >= IMPROVE_EVERY:
+               log.info(f"[{BOT_NAME}] Running strategy review...")
+               strategy_context, strategy_version = await improve_strategy(db, strategy_context, strategy_version)
+               resolved_at_last_review = resolved_total
+           log.info(f"[{BOT_NAME}] Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f} | WR:{s['win_rate']:.1f}% | Open:{s['open_positions']}")
+           mkts = await fetch_markets()
+           traded = 0
+           for m in mkts:
+               if db.has_open(m["id"]): continue
+               s = db.stats()
+               if s["open_positions"] >= MAX_POSITIONS: break
+               a = await analyze(m, s, strategy_context)
+               if not a: continue
+               log.info(f"  '{m['question'][:50]}' → {a['recommendation']} | {a['confidence']}% | closes:{m.get('end_date','?')[11:16]}")
+               if a["confidence"] >= BASE_CONFIDENCE and a["recommendation"] not in ("HOLD","SKIP"):
+                   if await do_trade(m, a, db): traded += 1
+               await asyncio.sleep(1)
+           s = db.stats()
+           log.info(f"Cycle #{cycle} done — {traded} new | Today:${s['daily_pnl']:.2f} | Total:${s['total_pnl']:.2f}")
+       except Exception as e:
+           log.error(f"Cycle error: {e}", exc_info=True)
+       await asyncio.sleep(SCAN_INTERVAL)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+   asyncio.run(main())
